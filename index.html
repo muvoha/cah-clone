@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cards Against Humanity Clone</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            text-align: center;
+            width: 350px;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 15px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #6200ee;
+            color: white;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3700b3;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>CAH Clone</h2>
+        <p>Enter password to access the game:</p>
+        <input type="password" id="password-input" placeholder="Password">
+        <button onclick="checkPassword()">Enter Lobby</button>
+    </div>
+
+    <!-- Firebase SDK Modular Imports via CDN -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // Your web app's Firebase configuration from your screen[cite: 3]
+        const firebaseConfig = {
+            apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",[cite: 3]
+            authDomain: "cah-clone-b60b4.firebaseapp.com",[cite: 3]
+            databaseURL: "https://cah-clone-b60b4-default-rtdb.europe-west1.firebasedatabase.app",[cite: 3]
+            projectId: "cah-clone-b60b4",[cite: 3]
+            storageBucket: "cah-clone-b60b4.appspot.com",[cite: 3]
+            messagingSenderId: "976107171722",[cite: 3]
+            appId: "1:976107171722:web:9edca7e092d80d20912273"[cite: 3]
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Make database globally accessible
+        window.db = db;
+    </script>
+
+    <script>
+        function checkPassword() {
+            const pass = document.getElementById('password-input').value;
+            // Placeholder check for now
+            if (pass === "admin123") {
+                alert("Access granted!");
+            } else {
+                alert("Incorrect password.");
+            }
+        }
+    </script>
+</body>
+</html>

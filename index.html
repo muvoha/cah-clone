@@ -58,15 +58,15 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getDatabase } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-        // Your web app's Firebase configuration from your screen[cite: 3]
+        // Your web app's Firebase configuration
         const firebaseConfig = {
-            apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",[cite: 3]
-            authDomain: "cah-clone-b60b4.firebaseapp.com",[cite: 3]
-            databaseURL: "https://cah-clone-b60b4-default-rtdb.europe-west1.firebasedatabase.app",[cite: 3]
-            projectId: "cah-clone-b60b4",[cite: 3]
-            storageBucket: "cah-clone-b60b4.appspot.com",[cite: 3]
-            messagingSenderId: "976107171722",[cite: 3]
-            appId: "1:976107171722:web:9edca7e092d80d20912273"[cite: 3]
+            apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
+            authDomain: "cah-clone-b60b4.firebaseapp.com",
+            databaseURL: "https://cah-clone-b60b4-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "cah-clone-b60b4",
+            storageBucket: "cah-clone-b60b4.appspot.com",
+            messagingSenderId: "976107171722",
+            appId: "1:976107171722:web:9edca7e092d80d20912273"
         };
 
         // Initialize Firebase
@@ -78,11 +78,25 @@
     </script>
 
     <script>
-        function checkPassword() {
+        // Helper function to create a SHA-256 hash of the input password
+        async function sha256(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex;
+        }
+
+        async function checkPassword() {
             const pass = document.getElementById('password-input').value;
-            // Placeholder check for now
-            if (pass === "admin123") {
-                alert("Access granted!");
+            
+            // This is the SHA-256 hash for "admin123"
+            const correctHash = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
+            
+            const userHash = await sha256(pass);
+
+            if (userHash === correctHash) {
+                alert("Access granted! Next we will build the room creation screen.");
             } else {
                 alert("Incorrect password.");
             }

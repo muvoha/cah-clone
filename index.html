@@ -85,7 +85,7 @@
             padding-left: 20px;
             text-align: left;
         }
-        /* --- NEW: Black Card Styling --- */
+        /* Black Card Styling */
         #black-card-container {
             margin-top: 20px;
             display: flex;
@@ -109,7 +109,7 @@
             box-sizing: border-box;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
-        /* --- White Card Styling --- */
+        /* White Card Styling */
         #hand-container {
             display: flex;
             flex-wrap: wrap;
@@ -318,6 +318,7 @@
             window.dbSet(newPlayerRef, { name: playerName }).then(() => {
                 enterRoomView("Room " + roomId.substring(1, 6));
                 listenToRoomPlayers(roomId);
+                listenToRoomBlackCard(roomId); // Listen for shared black card
             }).catch((error) => {
                 alert("Failed to join room: " + error.message);
             });
@@ -353,24 +354,38 @@
             });
         }
 
+        // --- LISTEN FOR SHARED BLACK CARD FROM FIREBASE ---
+        function listenToRoomBlackCard(roomId) {
+            const blackCardRef = window.dbRef(window.db, `rooms/${roomId}/currentBlackCard`);
+            
+            window.dbOnValue(blackCardRef, (snapshot) => {
+                const card = snapshot.val();
+                if (card) {
+                    currentBlackCard = card;
+                    renderBlackCard();
+                }
+            });
+        }
+
         function startGame() {
-            // Draw a black card
+            // Select 1 black card and publish it to Firebase for everyone in the room
             if (blackCards.length > 0) {
-                currentBlackCard = blackCards.pop();
+                const pickedBlack = blackCards.pop();
+                const blackRef = window.dbRef(window.db, `rooms/${currentRoomId}/currentBlackCard`);
+                window.dbSet(blackRef, pickedBlack);
             }
 
-            // Draw 7 white cards
+            // Draw 7 white cards locally for personal hand
             myHand = [];
             for (let i = 0; i < 7; i++) {
                 if (whiteCards.length > 0) {
                     myHand.push(whiteCards.pop());
                 }
             }
-            renderGame();
+            renderHand();
         }
 
-        function renderGame() {
-            // Render Black Card
+        function renderBlackCard() {
             const blackContainer = document.getElementById('black-card-container');
             blackContainer.innerHTML = "";
             if (currentBlackCard) {
@@ -383,8 +398,9 @@
                 `;
                 blackContainer.appendChild(blackDiv);
             }
+        }
 
-            // Render White Cards Hand
+        function renderHand() {
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = ""; 
 

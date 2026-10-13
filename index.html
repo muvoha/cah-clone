@@ -327,6 +327,22 @@
                 }
             });
         }
+
+        // --- NEW: CARD LOADING FUNCTION ---
+        async function loadCards() {
+            try {
+                const response = await fetch('cah-all-full.json');
+                const data = await response.json();
+                console.log("Cards loaded successfully!", data);
+                alert("Cards loaded successfully!");
+            } catch (error) {
+                console.error("Error loading cards:", error);
+                alert("Failed to load cards. Check console for details.");
+            }
+        }
+
+        // Test loading cards right when the page opens
+        loadCards();
     </script>
 </body>
 </html>

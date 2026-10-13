@@ -333,12 +333,19 @@
         let blackCards = [];
         let whiteCards = [];
 
+        // Helper function to shuffle any array randomly
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
         async function loadCards() {
             try {
                 const response = await fetch('cah-all-full.json');
                 allCardsData = await response.json();
                 
-                // Extract black and white cards from all packs
                 allCardsData.forEach(pack => {
                     if (pack.black) {
                         blackCards.push(...pack.black);
@@ -348,8 +355,18 @@
                     }
                 });
 
-                console.log(`Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards!`);
-                alert(`Success! Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards.`);
+                // Shuffle both decks!
+                shuffleArray(blackCards);
+                shuffleArray(whiteCards);
+
+                // Let's test drawing the top cards from our shuffled decks
+                const sampleBlack = blackCards[0].text;
+                const sampleWhite = whiteCards[0];
+
+                console.log("Random Black Card:", sampleBlack);
+                console.log("Random White Card:", sampleWhite);
+
+                alert(`Shuffled! Random Black Card: "${sampleBlack}"`);
             } catch (error) {
                 console.error("Error loading cards:", error);
                 alert("Failed to load cards. Check console for details.");

@@ -62,6 +62,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            text-align: left;
         }
         .room-item button {
             width: auto;
@@ -140,7 +141,6 @@
             const userHash = await sha256(pass);
 
             if (userHash === correctHash) {
-                // Hide password screen, show lobby screen
                 document.getElementById('password-screen').classList.add('hidden');
                 document.getElementById('lobby-screen').classList.remove('hidden');
             } else {
@@ -155,7 +155,6 @@
                 return;
             }
 
-            // Create a unique room reference in Firebase
             const roomsRef = window.dbRef(window.db, 'rooms');
             const newRoomRef = window.dbPush(roomsRef);
             
@@ -165,7 +164,7 @@
             };
 
             window.dbSet(newRoomRef, roomData).then(() => {
-                alert("Room created successfully! Room ID: " + newRoomRef.key);
+                // Room created successfully, real-time listener will update the list automatically
             }).catch((error) => {
                 alert("Failed to create room: " + error.message);
             });
@@ -189,10 +188,10 @@
                     const roomDiv = document.createElement('div');
                     roomDiv.className = 'room-item';
                     roomDiv.innerHTML = `
-                        <span>Host: ${room.host}</span>
+                        <span><strong>${room.host}'s Room</strong></span>
                         <button onclick="joinRoom('${roomId}')">Join</button>
                     `;
-                    roomsListEl.appendChild(roomsDiv);
+                    roomsListEl.appendChild(roomDiv);
                 }
             });
         }

@@ -122,6 +122,9 @@
             <!-- Dynamic players list -->
         </ul>
 
+        <!-- START GAME BUTTON -->
+        <button class="btn-secondary" onclick="startGame()">Start Game (Deal Cards)</button>
+
         <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
     </div>
 
@@ -159,6 +162,41 @@
         let currentRoomId = null;
         let currentPlayerId = null;
         let currentPlayerName = null;
+
+        // Card variables
+        let allCardsData = null;
+        let blackCards = [];
+        let whiteCards = [];
+        let myHand = [];
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        async function loadCards() {
+            try {
+                const response = await fetch('cah-all-full.json');
+                allCardsData = await response.json();
+                
+                allCardsData.forEach(pack => {
+                    if (pack.black) {
+                        blackCards.push(...pack.black);
+                    }
+                    if (pack.white) {
+                        whiteCards.push(...pack.white);
+                    }
+                });
+
+                shuffleArray(blackCards);
+                shuffleArray(whiteCards);
+                console.log(`Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards!`);
+            } catch (error) {
+                console.error("Error loading cards:", error);
+            }
+        }
 
         async function sha256(message) {
             const msgBuffer = new TextEncoder().encode(message);
@@ -217,7 +255,6 @@
             const newPlayerRef = window.dbPush(playersRef);
             currentPlayerId = newPlayerRef.key;
 
-            // Remove only this player entry upon disconnection
             window.dbOnDisconnect(newPlayerRef).remove();
 
             window.dbSet(newPlayerRef, { name: playerName }).then(() => {
@@ -242,7 +279,6 @@
                 const playersData = snapshot.val();
                 
                 if (!playersData) {
-                    // If no players remain in this room, delete the room node entirely from Firebase
                     const roomRef = window.dbRef(window.db, `rooms/${roomId}`);
                     window.dbRemove(roomRef);
                     return;
@@ -259,11 +295,21 @@
             });
         }
 
+        function startGame() {
+            myHand = [];
+            for (let i = 0; i < 7; i++) {
+                if (whiteCards.length > 0) {
+                    myHand.push(whiteCards.pop());
+                }
+            }
+            console.log("Your Hand of White Cards:", myHand);
+            alert(`Game started! Drawn ${myHand.length} white cards. Press F12 and look at the Console to see them!`);
+        }
+
         function leaveRoom() {
             if (currentRoomId && currentPlayerId) {
                 const playerRef = window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`);
                 window.dbRemove(playerRef).then(() => {
-                    // Check immediately if any players are left; if not, remove the room
                     const playersRef = window.dbRef(window.db, `rooms/${currentRoomId}/players`);
                     window.dbGet(playersRef).then((snapshot) => {
                         if (!snapshot.exists()) {
@@ -292,7 +338,6 @@
 
                 for (const roomId in rooms) {
                     const room = rooms[roomId];
-                    // If a room has no players node or the players node is empty, delete it
                     if (!room.players || Object.keys(room.players).length === 0) {
                         window.dbRemove(window.dbRef(window.db, `rooms/${roomId}`));
                         cleanedCount++;
@@ -326,51 +371,6 @@
                     roomsListEl.appendChild(roomDiv);
                 }
             });
-        }
-
-        // Global variable to store our cards
-        let allCardsData = null;
-        let blackCards = [];
-        let whiteCards = [];
-
-        // Helper function to shuffle any array randomly
-        function shuffleArray(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-        }
-
-        async function loadCards() {
-            try {
-                const response = await fetch('cah-all-full.json');
-                allCardsData = await response.json();
-                
-                allCardsData.forEach(pack => {
-                    if (pack.black) {
-                        blackCards.push(...pack.black);
-                    }
-                    if (pack.white) {
-                        whiteCards.push(...pack.white);
-                    }
-                });
-
-                // Shuffle both decks!
-                shuffleArray(blackCards);
-                shuffleArray(whiteCards);
-
-                // Let's test drawing the top cards from our shuffled decks
-                const sampleBlack = blackCards[0].text;
-                const sampleWhite = whiteCards[0];
-
-                console.log("Random Black Card:", sampleBlack);
-                console.log("Random White Card:", sampleWhite);
-
-                alert(`Shuffled! Random Black Card: "${sampleBlack}"`);
-            } catch (error) {
-                console.error("Error loading cards:", error);
-                alert("Failed to load cards. Check console for details.");
-            }
         }
 
         loadCards();

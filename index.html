@@ -85,6 +85,31 @@
             padding-left: 20px;
             text-align: left;
         }
+        /* --- NEW: Black Card Styling --- */
+        #black-card-container {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .black-card {
+            background-color: #000000;
+            color: #ffffff;
+            border: 2px solid #444;
+            padding: 16px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 260px;
+            min-height: 120px;
+            font-size: 15px;
+            font-weight: bold;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-sizing: border-box;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+        /* --- White Card Styling --- */
         #hand-container {
             display: flex;
             flex-wrap: wrap;
@@ -151,8 +176,12 @@
             <!-- Dynamic players list -->
         </ul>
 
-        <button class="btn-secondary" onclick="startGame()">Start Game (Deal Cards)</button>
+        <button class="btn-secondary" onclick="startGame()">Start Game</button>
 
+        <!-- AREA WHERE BLACK CARD WILL SHOW UP -->
+        <div id="black-card-container"></div>
+
+        <!-- AREA WHERE WHITE CARDS WILL SHOW UP -->
         <div id="hand-container"></div>
 
         <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
@@ -197,6 +226,7 @@
         let blackCards = [];
         let whiteCards = [];
         let myHand = [];
+        let currentBlackCard = null;
 
         function shuffleArray(array) {
             for (let i = array.length - 1; i > 0; i--) {
@@ -324,23 +354,42 @@
         }
 
         function startGame() {
+            // Draw a black card
+            if (blackCards.length > 0) {
+                currentBlackCard = blackCards.pop();
+            }
+
+            // Draw 7 white cards
             myHand = [];
             for (let i = 0; i < 7; i++) {
                 if (whiteCards.length > 0) {
                     myHand.push(whiteCards.pop());
                 }
             }
-            renderHand();
+            renderGame();
         }
 
-        function renderHand() {
+        function renderGame() {
+            // Render Black Card
+            const blackContainer = document.getElementById('black-card-container');
+            blackContainer.innerHTML = "";
+            if (currentBlackCard) {
+                const blackText = (typeof currentBlackCard === 'object' && currentBlackCard !== null) ? currentBlackCard.text : currentBlackCard;
+                const blackDiv = document.createElement('div');
+                blackDiv.className = 'black-card';
+                blackDiv.innerHTML = `
+                    <span>${blackText}</span>
+                    <span style="font-size: 10px; color: #aaa;">Cards Against Humanity</span>
+                `;
+                blackContainer.appendChild(blackDiv);
+            }
+
+            // Render White Cards Hand
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = ""; 
 
             myHand.forEach((card) => {
-                // Safely extract text whether the card is an object or a plain string
                 const cardText = (typeof card === 'object' && card !== null) ? card.text : card;
-
                 const cardDiv = document.createElement('div');
                 cardDiv.className = 'white-card';
                 cardDiv.innerHTML = `
@@ -369,6 +418,7 @@
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
             document.getElementById('hand-container').innerHTML = ""; 
+            document.getElementById('black-card-container').innerHTML = ""; 
         }
 
         function cleanupStaleRooms() {

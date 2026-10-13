@@ -35,7 +35,7 @@
             border-radius: 8px;
             border: 1px solid #444;
             box-sizing: border-box;
-            font-size: 16px; /* Prevents iOS auto-zoom on focus */
+            font-size: 16px;
         }
         input {
             background-color: #2a2a2a;
@@ -50,6 +50,10 @@
         }
         button:active {
             background-color: #3700b3;
+        }
+        .btn-danger {
+            background-color: #cf6679;
+            color: #000;
         }
         .hidden {
             display: none;
@@ -71,6 +75,10 @@
             font-size: 14px;
             background-color: #03dac6;
             color: #000;
+        }
+        ul {
+            padding-left: 20px;
+            text-align: left;
         }
     </style>
 </head>
@@ -98,10 +106,23 @@
         </div>
     </div>
 
+    <!-- ACTIVE ROOM SCREEN -->
+    <div id="room-screen" class="container hidden">
+        <h2 id="room-title">Room</h2>
+        <p>Waiting for players to join...</p>
+        
+        <h3>Players in Room:</h3>
+        <ul id="player-list">
+            <!-- Dynamic players list -->
+        </ul>
+
+        <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
+    </div>
+
     <!-- Firebase SDK Modular Imports via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, push, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, push, onValue, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
@@ -122,12 +143,16 @@
         window.dbSet = set;
         window.dbPush = push;
         window.dbOnValue = onValue;
+        window.dbRemove = remove;
+        window.dbOnDisconnect = onDisconnect;
 
-        // Start listening for rooms once script loads
         loadRooms();
     </script>
 
     <script>
+        let currentRoomId = null;
+        let currentPlayerName = null;
+
         async function sha256(message) {
             const msgBuffer = new TextEncoder().encode(message);
             const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -155,19 +180,57 @@
                 return;
             }
 
+            currentPlayerName = playerName;
             const roomsRef = window.dbRef(window.db, 'rooms');
             const newRoomRef = window.dbPush(roomsRef);
+            currentRoomId = newRoomRef.key;
             
             const roomData = {
                 host: playerName,
                 status: "waiting"
             };
 
+            // Automatically delete the room if the host disconnects or closes the page
+            window.dbOnDisconnect(newRoomRef).remove();
+
             window.dbSet(newRoomRef, roomData).then(() => {
-                // Room created successfully, real-time listener will update the list automatically
+                enterRoomView(playerName + "'s Room");
             }).catch((error) => {
                 alert("Failed to create room: " + error.message);
             });
+        }
+
+        function joinRoom(roomId) {
+            const playerName = document.getElementById('player-name').value.trim();
+            if (!playerName) {
+                alert("Please enter your player name in the box above before joining!");
+                return;
+            }
+
+            currentPlayerName = playerName;
+            currentRoomId = roomId;
+            enterRoomView("Room " + roomId.substring(1, 6));
+        }
+
+        function enterRoomView(roomTitleText) {
+            document.getElementById('lobby-screen').classList.add('hidden');
+            document.getElementById('room-screen').classList.remove('hidden');
+            document.getElementById('room-title').innerText = roomTitleText;
+
+            // Display current player in the room list
+            const playerListEl = document.getElementById('player-list');
+            playerListEl.innerHTML = `<li>${currentPlayerName} (You)</li>`;
+        }
+
+        function leaveRoom() {
+            if (currentRoomId) {
+                // If the host leaves, we can remove the room
+                const roomRef = window.dbRef(window.db, 'rooms/' + currentRoomId);
+                window.dbRemove(roomRef);
+            }
+            currentRoomId = null;
+            document.getElementById('room-screen').classList.add('hidden');
+            document.getElementById('lobby-screen').classList.remove('hidden');
         }
 
         function loadRooms() {
@@ -194,15 +257,6 @@
                     roomsListEl.appendChild(roomDiv);
                 }
             });
-        }
-
-        function joinRoom(roomId) {
-            const playerName = document.getElementById('player-name').value.trim();
-            if (!playerName) {
-                alert("Please enter your player name in the box above before joining!");
-                return;
-            }
-            alert("Joined room: " + roomId + " as " + playerName);
         }
     </script>
 </body>

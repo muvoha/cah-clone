@@ -330,13 +330,26 @@
 
         // Global variable to store our cards
         let allCardsData = null;
+        let blackCards = [];
+        let whiteCards = [];
 
         async function loadCards() {
             try {
                 const response = await fetch('cah-all-full.json');
                 allCardsData = await response.json();
-                console.log("Cards loaded and saved!", allCardsData);
-                alert("Cards loaded and saved into memory!");
+                
+                // Extract black and white cards from all packs
+                allCardsData.forEach(pack => {
+                    if (pack.black) {
+                        blackCards.push(...pack.black);
+                    }
+                    if (pack.white) {
+                        whiteCards.push(...pack.white);
+                    }
+                });
+
+                console.log(`Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards!`);
+                alert(`Success! Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards.`);
             } catch (error) {
                 console.error("Error loading cards:", error);
                 alert("Failed to load cards. Check console for details.");

@@ -55,6 +55,11 @@
             background-color: #cf6679;
             color: #000;
         }
+        .btn-secondary {
+            background-color: #03dac6;
+            color: #000;
+            margin-top: 10px;
+        }
         .hidden {
             display: none;
         }
@@ -104,6 +109,7 @@
         <div id="rooms-list">
             <p style="color: #888;">Loading rooms...</p>
         </div>
+        <button class="btn-secondary" onclick="cleanupStaleRooms()">Clear Empty Rooms</button>
     </div>
 
     <!-- ACTIVE ROOM SCREEN -->
@@ -122,7 +128,7 @@
     <!-- Firebase SDK Modular Imports via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, push, onValue, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
@@ -144,6 +150,7 @@
         window.dbOnValue = onValue;
         window.dbRemove = remove;
         window.dbOnDisconnect = onDisconnect;
+        window.dbGet = get;
 
         loadRooms();
     </script>
@@ -206,12 +213,11 @@
             currentPlayerName = playerName;
             currentRoomId = roomId;
 
-            // Add this specific player inside the room's players list
             const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
             const newPlayerRef = window.dbPush(playersRef);
             currentPlayerId = newPlayerRef.key;
 
-            // Automatically remove *only this player* if they disconnect/close tab
+            // Remove only this player entry upon disconnection
             window.dbOnDisconnect(newPlayerRef).remove();
 
             window.dbSet(newPlayerRef, { name: playerName }).then(() => {
@@ -234,14 +240,15 @@
 
             window.dbOnValue(playersRef, (snapshot) => {
                 const playersData = snapshot.val();
-                playerListEl.innerHTML = "";
-
+                
                 if (!playersData) {
-                    // If all players left, room is empty
-                    leaveRoom();
+                    // If no players remain in this room, delete the room node entirely from Firebase
+                    const roomRef = window.dbRef(window.db, `rooms/${roomId}`);
+                    window.dbRemove(roomRef);
                     return;
                 }
 
+                playerListEl.innerHTML = "";
                 for (const pId in playersData) {
                     const player = playersData[pId];
                     const li = document.createElement('li');
@@ -255,12 +262,44 @@
         function leaveRoom() {
             if (currentRoomId && currentPlayerId) {
                 const playerRef = window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`);
-                window.dbRemove(playerRef);
+                window.dbRemove(playerRef).then(() => {
+                    // Check immediately if any players are left; if not, remove the room
+                    const playersRef = window.dbRef(window.db, `rooms/${currentRoomId}/players`);
+                    window.dbGet(playersRef).then((snapshot) => {
+                        if (!snapshot.exists()) {
+                            const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
+                            window.dbRemove(roomRef);
+                        }
+                    });
+                });
             }
             currentRoomId = null;
             currentPlayerId = null;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
+        }
+
+        function cleanupStaleRooms() {
+            const roomsRef = window.dbRef(window.db, 'rooms');
+            window.dbGet(roomsRef).then((snapshot) => {
+                if (!snapshot.exists()) {
+                    alert("No rooms to clean.");
+                    return;
+                }
+
+                const rooms = snapshot.val();
+                let cleanedCount = 0;
+
+                for (const roomId in rooms) {
+                    const room = rooms[roomId];
+                    // If a room has no players node or the players node is empty, delete it
+                    if (!room.players || Object.keys(room.players).length === 0) {
+                        window.dbRemove(window.dbRef(window.db, `rooms/${roomId}`));
+                        cleanedCount++;
+                    }
+                }
+                alert(`Cleanup complete! Removed ${cleanedCount} empty room(s).`);
+            });
         }
 
         function loadRooms() {

@@ -109,7 +109,7 @@
     <!-- ACTIVE ROOM SCREEN -->
     <div id="room-screen" class="container hidden">
         <h2 id="room-title">Room</h2>
-        <p>Waiting for players to join...</p>
+        <p>Waiting for players...</p>
         
         <h3>Players in Room:</h3>
         <ul id="player-list">
@@ -137,7 +137,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Make database functions globally accessible
         window.db = db;
         window.dbRef = ref;
         window.dbSet = set;
@@ -151,6 +150,7 @@
 
     <script>
         let currentRoomId = null;
+        let currentPlayerId = null;
         let currentPlayerName = null;
 
         async function sha256(message) {
@@ -180,7 +180,6 @@
                 return;
             }
 
-            currentPlayerName = playerName;
             const roomsRef = window.dbRef(window.db, 'rooms');
             const newRoomRef = window.dbPush(roomsRef);
             currentRoomId = newRoomRef.key;
@@ -190,18 +189,15 @@
                 status: "waiting"
             };
 
-            // Automatically delete the room if the host disconnects or closes the page
-            window.dbOnDisconnect(newRoomRef).remove();
-
             window.dbSet(newRoomRef, roomData).then(() => {
-                enterRoomView(playerName + "'s Room");
+                joinRoom(currentRoomId, playerName);
             }).catch((error) => {
                 alert("Failed to create room: " + error.message);
             });
         }
 
-        function joinRoom(roomId) {
-            const playerName = document.getElementById('player-name').value.trim();
+        function joinRoom(roomId, forcedName = null) {
+            const playerName = forcedName || document.getElementById('player-name').value.trim();
             if (!playerName) {
                 alert("Please enter your player name in the box above before joining!");
                 return;
@@ -209,26 +205,60 @@
 
             currentPlayerName = playerName;
             currentRoomId = roomId;
-            enterRoomView("Room " + roomId.substring(1, 6));
+
+            // Add this specific player inside the room's players list
+            const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
+            const newPlayerRef = window.dbPush(playersRef);
+            currentPlayerId = newPlayerRef.key;
+
+            // Automatically remove *only this player* if they disconnect/close tab
+            window.dbOnDisconnect(newPlayerRef).remove();
+
+            window.dbSet(newPlayerRef, { name: playerName }).then(() => {
+                enterRoomView("Room " + roomId.substring(1, 6));
+                listenToRoomPlayers(roomId);
+            }).catch((error) => {
+                alert("Failed to join room: " + error.message);
+            });
         }
 
         function enterRoomView(roomTitleText) {
             document.getElementById('lobby-screen').classList.add('hidden');
             document.getElementById('room-screen').classList.remove('hidden');
             document.getElementById('room-title').innerText = roomTitleText;
+        }
 
-            // Display current player in the room list
+        function listenToRoomPlayers(roomId) {
+            const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
             const playerListEl = document.getElementById('player-list');
-            playerListEl.innerHTML = `<li>${currentPlayerName} (You)</li>`;
+
+            window.dbOnValue(playersRef, (snapshot) => {
+                const playersData = snapshot.val();
+                playerListEl.innerHTML = "";
+
+                if (!playersData) {
+                    // If all players left, room is empty
+                    leaveRoom();
+                    return;
+                }
+
+                for (const pId in playersData) {
+                    const player = playersData[pId];
+                    const li = document.createElement('li');
+                    const isYou = pId === currentPlayerId ? " (You)" : "";
+                    li.innerText = player.name + isYou;
+                    playerListEl.appendChild(li);
+                }
+            });
         }
 
         function leaveRoom() {
-            if (currentRoomId) {
-                // If the host leaves, we can remove the room
-                const roomRef = window.dbRef(window.db, 'rooms/' + currentRoomId);
-                window.dbRemove(roomRef);
+            if (currentRoomId && currentPlayerId) {
+                const playerRef = window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`);
+                window.dbRemove(playerRef);
             }
             currentRoomId = null;
+            currentPlayerId = null;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
         }

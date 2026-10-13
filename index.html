@@ -176,7 +176,8 @@
             <!-- Dynamic players list -->
         </ul>
 
-        <button class="btn-secondary" onclick="startGame()">Start Game</button>
+        <!-- START GAME BUTTON (Controlled for Host) -->
+        <button id="start-game-btn" class="btn-secondary hidden" onclick="startNewGame()">Start Game</button>
 
         <!-- AREA WHERE BLACK CARD WILL SHOW UP -->
         <div id="black-card-container"></div>
@@ -221,6 +222,7 @@
         let currentRoomId = null;
         let currentPlayerId = null;
         let currentPlayerName = null;
+        let isRoomHost = false;
 
         let allCardsData = null;
         let blackCards = [];
@@ -293,6 +295,7 @@
             };
 
             window.dbSet(newRoomRef, roomData).then(() => {
+                isRoomHost = true;
                 joinRoom(currentRoomId, playerName);
             }).catch((error) => {
                 alert("Failed to create room: " + error.message);
@@ -318,7 +321,7 @@
             window.dbSet(newPlayerRef, { name: playerName }).then(() => {
                 enterRoomView("Room " + roomId.substring(1, 6));
                 listenToRoomPlayers(roomId);
-                listenToRoomBlackCard(roomId); // Listen for shared black card
+                listenToRoomStatus(roomId);
             }).catch((error) => {
                 alert("Failed to join room: " + error.message);
             });
@@ -333,6 +336,7 @@
         function listenToRoomPlayers(roomId) {
             const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
             const playerListEl = document.getElementById('player-list');
+            const startGameBtn = document.getElementById('start-game-btn');
 
             window.dbOnValue(playersRef, (snapshot) => {
                 const playersData = snapshot.val();
@@ -344,38 +348,71 @@
                 }
 
                 playerListEl.innerHTML = "";
+                let playerCount = 0;
+
                 for (const pId in playersData) {
+                    playerCount++;
                     const player = playersData[pId];
                     const li = document.createElement('li');
                     const isYou = pId === currentPlayerId ? " (You)" : "";
                     li.innerText = player.name + isYou;
                     playerListEl.appendChild(li);
                 }
-            });
-        }
 
-        // --- LISTEN FOR SHARED BLACK CARD FROM FIREBASE ---
-        function listenToRoomBlackCard(roomId) {
-            const blackCardRef = window.dbRef(window.db, `rooms/${roomId}/currentBlackCard`);
-            
-            window.dbOnValue(blackCardRef, (snapshot) => {
-                const card = snapshot.val();
-                if (card) {
-                    currentBlackCard = card;
-                    renderBlackCard();
+                // Only show Start Game button to the host if there are at least 2 players
+                if (isRoomHost && playerCount >= 2) {
+                    startGameBtn.classList.remove('hidden');
+                } else {
+                    startGameBtn.classList.add('hidden');
                 }
             });
         }
 
-        function startGame() {
-            // Select 1 black card and publish it to Firebase for everyone in the room
-            if (blackCards.length > 0) {
-                const pickedBlack = blackCards.pop();
-                const blackRef = window.dbRef(window.db, `rooms/${currentRoomId}/currentBlackCard`);
-                window.dbSet(blackRef, pickedBlack);
-            }
+        function listenToRoomStatus(roomId) {
+            const roomRef = window.dbRef(window.db, `rooms/${roomId}`);
+            
+            window.dbOnValue(roomRef, (snapshot) => {
+                const roomData = snapshot.val();
+                if (!roomData) return;
 
-            // Draw 7 white cards locally for personal hand
+                // Sync Black Card
+                if (roomData.currentBlackCard) {
+                    currentBlackCard = roomData.currentBlackCard;
+                    renderBlackCard();
+                }
+
+                // If game started, deal initial hand if not already dealt
+                if (roomData.status === "playing" && myHand.length === 0) {
+                    dealInitialHand();
+                }
+            });
+        }
+
+        function startNewGame() {
+            // Host triggers game start on Firebase
+            const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
+            window.dbGet(roomRef).then((snapshot) => {
+                const roomData = snapshot.val();
+                const playerCount = roomData && roomData.players ? Object.keys(roomData.players).length : 0;
+
+                if (playerCount < 2) {
+                    alert("You need at least 2 players to start the game!");
+                    return;
+                }
+
+                // Pick a black card and set room status to playing
+                if (blackCards.length > 0) {
+                    const pickedBlack = blackCards.pop();
+                    window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}`), {
+                        ...roomData,
+                        status: "playing",
+                        currentBlackCard: pickedBlack
+                    });
+                }
+            });
+        }
+
+        function dealInitialHand() {
             myHand = [];
             for (let i = 0; i < 7; i++) {
                 if (whiteCards.length > 0) {
@@ -431,6 +468,9 @@
             }
             currentRoomId = null;
             currentPlayerId = null;
+            isRoomHost = false;
+            myHand = [];
+            currentBlackCard = null;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
             document.getElementById('hand-container').innerHTML = ""; 

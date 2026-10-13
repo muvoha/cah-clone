@@ -13,24 +13,33 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 15px;
+            box-sizing: border-box;
         }
         .container {
             background-color: #1e1e1e;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
             text-align: center;
-            width: 350px;
+            width: 100%;
+            max-width: 400px;
+            box-sizing: border-box;
         }
         input, button {
             width: 100%;
-            padding: 10px;
+            padding: 14px;
             margin-top: 15px;
-            border-radius: 4px;
+            border-radius: 8px;
             border: 1px solid #444;
             box-sizing: border-box;
+            font-size: 16px; /* Prevents iOS auto-zoom on focus */
+        }
+        input {
+            background-color: #2a2a2a;
+            color: #ffffff;
         }
         button {
             background-color: #6200ee;
@@ -39,26 +48,60 @@
             font-weight: bold;
             cursor: pointer;
         }
-        button:hover {
+        button:active {
             background-color: #3700b3;
+        }
+        .hidden {
+            display: none;
+        }
+        .room-item {
+            background-color: #2a2a2a;
+            padding: 12px;
+            margin-top: 10px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .room-item button {
+            width: auto;
+            padding: 8px 14px;
+            margin-top: 0;
+            font-size: 14px;
+            background-color: #03dac6;
+            color: #000;
         }
     </style>
 </head>
 <body>
 
-    <div class="container">
+    <!-- PASSWORD SCREEN -->
+    <div id="password-screen" class="container">
         <h2>CAH Clone</h2>
-        <p>Enter password to access the game:</p>
+        <p>Enter password to access:</p>
         <input type="password" id="password-input" placeholder="Password">
-        <button onclick="checkPassword()">Enter Lobby</button>
+        <button onclick="checkPassword()">Enter</button>
+    </div>
+
+    <!-- LOBBY SCREEN -->
+    <div id="lobby-screen" class="container hidden">
+        <h2>Game Lobby</h2>
+        <input type="text" id="player-name" placeholder="Enter your player name">
+        <button onclick="createRoom()">Create New Room</button>
+        
+        <hr style="border: 0; border-top: 1px solid #444; margin: 20px 0;">
+        
+        <h3>Available Rooms</h3>
+        <div id="rooms-list">
+            <p style="color: #888;">Loading rooms...</p>
+        </div>
     </div>
 
     <!-- Firebase SDK Modular Imports via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, push, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
             authDomain: "cah-clone-b60b4.firebaseapp.com",
@@ -69,37 +112,98 @@
             appId: "1:976107171722:web:9edca7e092d80d20912273"
         };
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Make database globally accessible
+        // Make database functions globally accessible
         window.db = db;
+        window.dbRef = ref;
+        window.dbSet = set;
+        window.dbPush = push;
+        window.dbOnValue = onValue;
+
+        // Start listening for rooms once script loads
+        loadRooms();
     </script>
 
     <script>
-        // Helper function to create a SHA-256 hash of the input password
         async function sha256(message) {
             const msgBuffer = new TextEncoder().encode(message);
             const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
             const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            return hashHex;
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
         async function checkPassword() {
             const pass = document.getElementById('password-input').value;
-            
-            // This is the SHA-256 hash for "admin123"
             const correctHash = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
-            
             const userHash = await sha256(pass);
 
             if (userHash === correctHash) {
-                alert("Access granted! Next we will build the room creation screen.");
+                // Hide password screen, show lobby screen
+                document.getElementById('password-screen').classList.add('hidden');
+                document.getElementById('lobby-screen').classList.remove('hidden');
             } else {
                 alert("Incorrect password.");
             }
+        }
+
+        function createRoom() {
+            const playerName = document.getElementById('player-name').value.trim();
+            if (!playerName) {
+                alert("Please enter your player name first!");
+                return;
+            }
+
+            // Create a unique room reference in Firebase
+            const roomsRef = window.dbRef(window.db, 'rooms');
+            const newRoomRef = window.dbPush(roomsRef);
+            
+            const roomData = {
+                host: playerName,
+                status: "waiting"
+            };
+
+            window.dbSet(newRoomRef, roomData).then(() => {
+                alert("Room created successfully! Room ID: " + newRoomRef.key);
+            }).catch((error) => {
+                alert("Failed to create room: " + error.message);
+            });
+        }
+
+        function loadRooms() {
+            const roomsListEl = document.getElementById('rooms-list');
+            const roomsRef = window.dbRef(window.db, 'rooms');
+
+            window.dbOnValue(roomsRef, (snapshot) => {
+                const data = snapshot.val();
+                roomsListEl.innerHTML = "";
+
+                if (!data) {
+                    roomsListEl.innerHTML = '<p style="color: #888;">No active rooms. Create one above!</p>';
+                    return;
+                }
+
+                for (const roomId in data) {
+                    const room = data[roomId];
+                    const roomDiv = document.createElement('div');
+                    roomDiv.className = 'room-item';
+                    roomDiv.innerHTML = `
+                        <span>Host: ${room.host}</span>
+                        <button onclick="joinRoom('${roomId}')">Join</button>
+                    `;
+                    roomsListEl.appendChild(roomsDiv);
+                }
+            });
+        }
+
+        function joinRoom(roomId) {
+            const playerName = document.getElementById('player-name').value.trim();
+            if (!playerName) {
+                alert("Please enter your player name in the box above before joining!");
+                return;
+            }
+            alert("Joined room: " + roomId + " as " + playerName);
         }
     </script>
 </body>

@@ -25,7 +25,7 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.6);
             text-align: center;
             width: 100%;
-            max-width: 400px;
+            max-width: 500px;
             box-sizing: border-box;
         }
         input, button {
@@ -85,6 +85,36 @@
             padding-left: 20px;
             text-align: left;
         }
+        /* --- NEW: White Card Styling --- */
+        #hand-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        .white-card {
+            background-color: #ffffff;
+            color: #000000;
+            padding: 12px;
+            border-radius: 6px;
+            width: 110px;
+            height: 140px;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-sizing: border-box;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .white-card:hover {
+            background-color: #e0e0e0;
+            transform: translateY(-3px);
+            transition: 0.2s;
+        }
     </style>
 </head>
 <body>
@@ -125,6 +155,9 @@
         <!-- START GAME BUTTON -->
         <button class="btn-secondary" onclick="startGame()">Start Game (Deal Cards)</button>
 
+        <!-- AREA WHERE CARDS WILL SHOW UP -->
+        <div id="hand-container"></div>
+
         <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
     </div>
 
@@ -163,7 +196,6 @@
         let currentPlayerId = null;
         let currentPlayerName = null;
 
-        // Card variables
         let allCardsData = null;
         let blackCards = [];
         let whiteCards = [];
@@ -192,7 +224,6 @@
 
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
-                console.log(`Loaded ${blackCards.length} black cards and ${whiteCards.length} white cards!`);
             } catch (error) {
                 console.error("Error loading cards:", error);
             }
@@ -302,8 +333,23 @@
                     myHand.push(whiteCards.pop());
                 }
             }
-            console.log("Your Hand of White Cards:", myHand);
-            alert(`Game started! Drawn ${myHand.length} white cards. Press F12 and look at the Console to see them!`);
+            renderHand();
+        }
+
+        // --- NEW: RENDER CARDS ON SCREEN ---
+        function renderHand() {
+            const handContainer = document.getElementById('hand-container');
+            handContainer.innerHTML = ""; // Clear out old cards
+
+            myHand.forEach((cardText, index) => {
+                const cardDiv = document.createElement('div');
+                cardDiv.className = 'white-card';
+                cardDiv.innerHTML = `
+                    <span>${cardText}</span>
+                    <span style="font-size: 10px; color: #555;">CAH</span>
+                `;
+                handContainer.appendChild(cardDiv);
+            });
         }
 
         function leaveRoom() {
@@ -323,6 +369,7 @@
             currentPlayerId = null;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
+            document.getElementById('hand-container').innerHTML = ""; // Clear hand on leave
         }
 
         function cleanupStaleRooms() {

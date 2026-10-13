@@ -328,20 +328,21 @@
             });
         }
 
-        // --- NEW: CARD LOADING FUNCTION ---
+        // Global variable to store our cards
+        let allCardsData = null;
+
         async function loadCards() {
             try {
                 const response = await fetch('cah-all-full.json');
-                const data = await response.json();
-                console.log("Cards loaded successfully!", data);
-                alert("Cards loaded successfully!");
+                allCardsData = await response.json();
+                console.log("Cards loaded and saved!", allCardsData);
+                alert("Cards loaded and saved into memory!");
             } catch (error) {
                 console.error("Error loading cards:", error);
                 alert("Failed to load cards. Check console for details.");
             }
         }
 
-        // Test loading cards right when the page opens
         loadCards();
     </script>
 </body>

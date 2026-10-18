@@ -109,6 +109,35 @@
             box-sizing: border-box;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
+        /* Table / Submissions Area */
+        #table-container {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            min-height: 100px;
+            background-color: #121212;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px dashed #444;
+        }
+        .table-card {
+            background-color: #ffffff;
+            color: #000000;
+            padding: 10px;
+            border-radius: 6px;
+            width: 100px;
+            height: 130px;
+            font-size: 12px;
+            font-weight: bold;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-sizing: border-box;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
         /* White Card & Selection Styling */
         #hand-container {
             display: flex;
@@ -187,6 +216,12 @@
         <!-- AREA WHERE BLACK CARD WILL SHOW UP -->
         <div id="black-card-container"></div>
 
+        <!-- SHARED TABLE / SUBMISSIONS AREA -->
+        <h4 style="margin: 15px 0 5px 0; color: #aaa;">Round Table (Submissions):</h4>
+        <div id="table-container">
+            <p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>
+        </div>
+
         <!-- AREA WHERE WHITE CARDS WILL SHOW UP -->
         <div id="hand-container"></div>
 
@@ -230,7 +265,7 @@
         let currentRoomId = null;
         let currentPlayerId = null;
         let currentPlayerName = null;
-        let roomHostName = null; // Track host name directly from Firebase
+        let roomHostName = null;
 
         let allCardsData = null;
         let blackCards = [];
@@ -240,8 +275,8 @@
         let selectedCharArrayIdx = null;
         let roomStatus = "waiting";
         let playerCount = 0;
+        let hasSubmitted = false;
 
-        // Session recovery check on page load
         window.addEventListener('DOMContentLoaded', () => {
             if (sessionStorage.getItem('cah_authenticated') === 'true') {
                 const savedRoomId = sessionStorage.getItem('cah_room_id');
@@ -356,6 +391,7 @@
                 enterRoomView("Room " + roomId.substring(1, 6));
                 listenToRoomPlayers(roomId);
                 listenToRoomStatus(roomId);
+                listenToRoomSubmissions(roomId);
             }).catch((error) => {
                 alert("Failed to join room: " + error.message);
             });
@@ -404,7 +440,7 @@
                 if (!roomData) return;
 
                 roomStatus = roomData.status || "waiting";
-                roomHostName = roomData.host; // Capture host name from Firebase
+                roomHostName = roomData.host;
                 updateStartButtonVisibility();
 
                 if (roomData.currentBlackCard) {
@@ -418,9 +454,35 @@
             });
         }
 
+        // --- NEW: LISTEN FOR SUBMISSIONS ON THE TABLE ---
+        function listenToRoomSubmissions(roomId) {
+            const submissionsRef = window.dbRef(window.db, `rooms/${roomId}/submissions`);
+            const tableContainer = document.getElementById('table-container');
+
+            window.dbOnValue(submissionsRef, (snapshot) => {
+                const submissionsData = snapshot.val();
+                tableContainer.innerHTML = "";
+
+                if (!submissionsData) {
+                    tableContainer.innerHTML = '<p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>';
+                    return;
+                }
+
+                for (const pId in submissionsData) {
+                    const sub = submissionsData[pId];
+                    const cardDiv = document.createElement('div');
+                    cardDiv.className = 'table-card';
+                    cardDiv.innerHTML = `
+                        <span>${sub.cardText}</span>
+                        <span style="font-size: 9px; color: #555;">- ${sub.playerName}</span>
+                    `;
+                    tableContainer.appendChild(cardDiv);
+                }
+            });
+        }
+
         function updateStartButtonVisibility() {
             const startGameBtn = document.getElementById('start-game-btn');
-            // Check if current player's name matches the Firebase room host name
             const isReallyHost = (currentPlayerName === roomHostName);
 
             if (isReallyHost && roomStatus === "waiting" && playerCount >= 2) {
@@ -481,6 +543,11 @@
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = ""; 
 
+            if (hasSubmitted) {
+                handContainer.innerHTML = '<p style="color: #03dac6; font-weight: bold;">Card submitted! Waiting for other players...</p>';
+                return;
+            }
+
             myHand.forEach((card, index) => {
                 const cardText = (typeof card === 'object' && card !== null) ? card.text : card;
                 const cardDiv = document.createElement('div');
@@ -498,13 +565,14 @@
         }
 
         function selectCard(index) {
+            if (hasSubmitted) return;
             selectedCharArrayIdx = index;
             renderHand();
             document.getElementById('submit-card-btn').classList.remove('hidden');
         }
 
         function submitCard() {
-            if (selectedCharArrayIdx === null) return;
+            if (selectedCharArrayIdx === null || hasSubmitted) return;
 
             const chosenCard = myHand[selectedCharArrayIdx];
             const cardText = (typeof chosenCard === 'object' && chosenCard !== null) ? chosenCard.text : chosenCard;
@@ -514,7 +582,15 @@
                 playerName: currentPlayerName,
                 cardText: cardText
             }).then(() => {
-                alert(`Submitted: "${cardText}"`);
+                hasSubmitted = true;
+                // Remove played card from hand and draw a replacement if available
+                myHand.splice(selectedCharArrayIdx, 1);
+                if (whiteCards.length > 0) {
+                    myHand.push(whiteCards.pop());
+                }
+                selectedCharArrayIdx = null;
+                document.getElementById('submit-card-btn').classList.add('hidden');
+                renderHand();
             }).catch((error) => {
                 alert("Failed to submit card: " + error.message);
             });
@@ -544,10 +620,12 @@
             selectedCharArrayIdx = null;
             roomStatus = "waiting";
             playerCount = 0;
+            hasSubmitted = false;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
             document.getElementById('hand-container').innerHTML = ""; 
             document.getElementById('black-card-container').innerHTML = ""; 
+            document.getElementById('table-container').innerHTML = '<p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>';
             document.getElementById('submit-card-btn').classList.add('hidden');
             document.getElementById('start-game-btn').classList.add('hidden');
         }

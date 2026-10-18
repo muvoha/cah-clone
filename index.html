@@ -230,7 +230,7 @@
         let currentRoomId = null;
         let currentPlayerId = null;
         let currentPlayerName = null;
-        let isRoomHost = false;
+        let roomHostName = null; // Track host name directly from Firebase
 
         let allCardsData = null;
         let blackCards = [];
@@ -248,13 +248,11 @@
                 const savedPlayerName = sessionStorage.getItem('cah_player_name');
 
                 if (savedRoomId && savedPlayerName) {
-                    // Automatically rejoin room if session data exists
                     document.getElementById('password-screen').classList.add('hidden');
                     document.getElementById('player-name').value = savedPlayerName;
                     
-                    // Wait a brief moment for Firebase DB references to be ready, then rejoin
                     setTimeout(() => {
-                        joinRoom(savedRoomId, savedPlayerName, true);
+                        joinRoom(savedRoomId, savedPlayerName);
                     }, 500);
                 } else {
                     document.getElementById('password-screen').classList.add('hidden');
@@ -329,14 +327,13 @@
             };
 
             window.dbSet(newRoomRef, roomData).then(() => {
-                isRoomHost = true;
                 joinRoom(currentRoomId, playerName);
             }).catch((error) => {
                 alert("Failed to create room: " + error.message);
             });
         }
 
-        function joinRoom(roomId, forcedName = null, isReconnect = false) {
+        function joinRoom(roomId, forcedName = null) {
             const playerName = forcedName || document.getElementById('player-name').value.trim();
             if (!playerName) {
                 alert("Please enter your player name in the box above before joining!");
@@ -346,7 +343,6 @@
             currentPlayerName = playerName;
             currentRoomId = roomId;
 
-            // Save state to session storage for reloads
             sessionStorage.setItem('cah_room_id', roomId);
             sessionStorage.setItem('cah_player_name', playerName);
 
@@ -408,6 +404,7 @@
                 if (!roomData) return;
 
                 roomStatus = roomData.status || "waiting";
+                roomHostName = roomData.host; // Capture host name from Firebase
                 updateStartButtonVisibility();
 
                 if (roomData.currentBlackCard) {
@@ -423,7 +420,10 @@
 
         function updateStartButtonVisibility() {
             const startGameBtn = document.getElementById('start-game-btn');
-            if (isRoomHost && roomStatus === "waiting" && playerCount >= 2) {
+            // Check if current player's name matches the Firebase room host name
+            const isReallyHost = (currentPlayerName === roomHostName);
+
+            if (isReallyHost && roomStatus === "waiting" && playerCount >= 2) {
                 startGameBtn.classList.remove('hidden');
             } else {
                 startGameBtn.classList.add('hidden');
@@ -521,7 +521,6 @@
         }
 
         function leaveRoom() {
-            // Clear session storage state on intentional leave
             sessionStorage.removeItem('cah_room_id');
             sessionStorage.removeItem('cah_player_name');
 
@@ -539,7 +538,7 @@
             }
             currentRoomId = null;
             currentPlayerId = null;
-            isRoomHost = false;
+            roomHostName = null;
             myHand = [];
             currentBlackCard = null;
             selectedCharArrayIdx = null;

@@ -234,7 +234,7 @@
     <!-- Firebase SDK Modular Imports via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, push, onValue, remove, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, update, push, onValue, remove, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
@@ -252,6 +252,7 @@
         window.db = db;
         window.dbRef = ref;
         window.dbSet = set;
+        window.dbUpdate = update;
         window.dbPush = push;
         window.dbOnValue = onValue;
         window.dbRemove = remove;
@@ -454,7 +455,6 @@
             });
         }
 
-        // --- NEW: LISTEN FOR SUBMISSIONS ON THE TABLE ---
         function listenToRoomSubmissions(roomId) {
             const submissionsRef = window.dbRef(window.db, `rooms/${roomId}/submissions`);
             const tableContainer = document.getElementById('table-container');
@@ -505,8 +505,8 @@
 
                 if (blackCards.length > 0) {
                     const pickedBlack = blackCards.pop();
-                    window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}`), {
-                        ...roomData,
+                    // Use dbUpdate instead of dbSet to preserve existing room structure/host info
+                    window.dbUpdate(roomRef, {
                         status: "playing",
                         currentBlackCard: pickedBlack
                     });
@@ -583,7 +583,6 @@
                 cardText: cardText
             }).then(() => {
                 hasSubmitted = true;
-                // Remove played card from hand and draw a replacement if available
                 myHand.splice(selectedCharArrayIdx, 1);
                 if (whiteCards.length > 0) {
                     myHand.push(whiteCards.pop());

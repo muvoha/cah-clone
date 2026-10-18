@@ -109,7 +109,7 @@
             box-sizing: border-box;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
-        /* White Card Styling */
+        /* White Card & Selection Styling */
         #hand-container {
             display: flex;
             flex-wrap: wrap;
@@ -133,11 +133,16 @@
             box-sizing: border-box;
             cursor: pointer;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 3px solid transparent;
         }
         .white-card:hover {
             background-color: #e0e0e0;
             transform: translateY(-3px);
             transition: 0.2s;
+        }
+        .white-card.selected {
+            border: 3px solid #6200ee;
+            transform: translateY(-5px);
         }
     </style>
 </head>
@@ -176,7 +181,7 @@
             <!-- Dynamic players list -->
         </ul>
 
-        <!-- START GAME BUTTON (Controlled for Host) -->
+        <!-- START GAME BUTTON -->
         <button id="start-game-btn" class="btn-secondary hidden" onclick="startNewGame()">Start Game</button>
 
         <!-- AREA WHERE BLACK CARD WILL SHOW UP -->
@@ -184,6 +189,9 @@
 
         <!-- AREA WHERE WHITE CARDS WILL SHOW UP -->
         <div id="hand-container"></div>
+
+        <!-- CONFIRM SUBMISSION BUTTON -->
+        <button id="submit-card-btn" class="btn-secondary hidden" onclick="submitCard()">Confirm Selected Card</button>
 
         <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
     </div>
@@ -229,6 +237,7 @@
         let whiteCards = [];
         let myHand = [];
         let currentBlackCard = null;
+        let selectedCharArrayIdx = null; // Tracks which card index in hand is currently clicked
 
         function shuffleArray(array) {
             for (let i = array.length - 1; i > 0; i--) {
@@ -359,7 +368,6 @@
                     playerListEl.appendChild(li);
                 }
 
-                // Only show Start Game button to the host if there are at least 2 players
                 if (isRoomHost && playerCount >= 2) {
                     startGameBtn.classList.remove('hidden');
                 } else {
@@ -375,13 +383,11 @@
                 const roomData = snapshot.val();
                 if (!roomData) return;
 
-                // Sync Black Card
                 if (roomData.currentBlackCard) {
                     currentBlackCard = roomData.currentBlackCard;
                     renderBlackCard();
                 }
 
-                // If game started, deal initial hand if not already dealt
                 if (roomData.status === "playing" && myHand.length === 0) {
                     dealInitialHand();
                 }
@@ -389,7 +395,6 @@
         }
 
         function startNewGame() {
-            // Host triggers game start on Firebase
             const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
             window.dbGet(roomRef).then((snapshot) => {
                 const roomData = snapshot.val();
@@ -400,7 +405,6 @@
                     return;
                 }
 
-                // Pick a black card and set room status to playing
                 if (blackCards.length > 0) {
                     const pickedBlack = blackCards.pop();
                     window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}`), {
@@ -441,15 +445,44 @@
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = ""; 
 
-            myHand.forEach((card) => {
+            myHand.forEach((card, index) => {
                 const cardText = (typeof card === 'object' && card !== null) ? card.text : card;
                 const cardDiv = document.createElement('div');
                 cardDiv.className = 'white-card';
+                if (selectedCharArrayIdx === index) {
+                    cardDiv.classList.add('selected');
+                }
+                cardDiv.onclick = () => selectCard(index);
                 cardDiv.innerHTML = `
                     <span>${cardText}</span>
                     <span style="font-size: 10px; color: #555;">CAH</span>
                 `;
                 handContainer.appendChild(cardDiv);
+            });
+        }
+
+        // --- NEW: SELECT A CARD IN HAND ---
+        function selectCard(index) {
+            selectedCharArrayIdx = index;
+            renderHand(); // re-render hand to update borders
+            document.getElementById('submit-card-btn').classList.remove('hidden');
+        }
+
+        // --- NEW: SUBMIT SELECTED CARD TO FIREBASE ---
+        function submitCard() {
+            if (selectedCharArrayIdx === null) return;
+
+            const chosenCard = myHand[selectedCharArrayIdx];
+            const cardText = (typeof chosenCard === 'object' && chosenCard !== null) ? chosenCard.text : chosenCard;
+
+            const submissionRef = window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`);
+            window.dbSet(submissionRef, {
+                playerName: currentPlayerName,
+                cardText: cardText
+            }).then(() => {
+                alert(`Submitted: "${cardText}"`);
+            }).catch((error) => {
+                alert("Failed to submit card: " + error.message);
             });
         }
 
@@ -471,10 +504,12 @@
             isRoomHost = false;
             myHand = [];
             currentBlackCard = null;
+            selectedCharArrayIdx = null;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
             document.getElementById('hand-container').innerHTML = ""; 
             document.getElementById('black-card-container').innerHTML = ""; 
+            document.getElementById('submit-card-btn').classList.add('hidden');
         }
 
         function cleanupStaleRooms() {

@@ -241,6 +241,14 @@
         let roomStatus = "waiting";
         let playerCount = 0;
 
+        // Check if user was already authenticated in this browser tab session
+        window.addEventListener('DOMContentLoaded', () => {
+            if (sessionStorage.getItem('cah_authenticated') === 'true') {
+                document.getElementById('password-screen').classList.add('hidden');
+                document.getElementById('lobby-screen').classList.remove('hidden');
+            }
+        });
+
         function shuffleArray(array) {
             for (let i = array.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
@@ -282,6 +290,7 @@
             const userHash = await sha256(pass);
 
             if (userHash === correctHash) {
+                sessionStorage.setItem('cah_authenticated', 'true');
                 document.getElementById('password-screen').classList.add('hidden');
                 document.getElementById('lobby-screen').classList.remove('hidden');
             } else {
@@ -396,7 +405,6 @@
 
         function updateStartButtonVisibility() {
             const startGameBtn = document.getElementById('start-game-btn');
-            // Only show to host if room is waiting and there are at least 2 players
             if (isRoomHost && roomStatus === "waiting" && playerCount >= 2) {
                 startGameBtn.classList.remove('hidden');
             } else {

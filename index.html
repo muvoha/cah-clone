@@ -277,6 +277,7 @@
         let roomStatus = "waiting";
         let playerCount = 0;
         let hasSubmitted = false;
+        let cardsLoaded = false;
 
         window.addEventListener('DOMContentLoaded', () => {
             if (sessionStorage.getItem('cah_authenticated') === 'true') {
@@ -320,6 +321,12 @@
 
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
+                cardsLoaded = true;
+
+                // If we already joined a room that is playing, deal hand now that cards are loaded
+                if (roomStatus === "playing" && myHand.length === 0) {
+                    dealInitialHand();
+                }
             } catch (error) {
                 console.error("Error loading cards:", error);
             }
@@ -449,7 +456,7 @@
                     renderBlackCard();
                 }
 
-                if (roomStatus === "playing" && myHand.length === 0) {
+                if (roomStatus === "playing" && myHand.length === 0 && cardsLoaded) {
                     dealInitialHand();
                 }
             });
@@ -505,7 +512,6 @@
 
                 if (blackCards.length > 0) {
                     const pickedBlack = blackCards.pop();
-                    // Use dbUpdate instead of dbSet to preserve existing room structure/host info
                     window.dbUpdate(roomRef, {
                         status: "playing",
                         currentBlackCard: pickedBlack

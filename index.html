@@ -237,7 +237,9 @@
         let whiteCards = [];
         let myHand = [];
         let currentBlackCard = null;
-        let selectedCharArrayIdx = null; // Tracks which card index in hand is currently clicked
+        let selectedCharArrayIdx = null;
+        let roomStatus = "waiting";
+        let playerCount = 0;
 
         function shuffleArray(array) {
             for (let i = array.length - 1; i > 0; i--) {
@@ -345,7 +347,6 @@
         function listenToRoomPlayers(roomId) {
             const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
             const playerListEl = document.getElementById('player-list');
-            const startGameBtn = document.getElementById('start-game-btn');
 
             window.dbOnValue(playersRef, (snapshot) => {
                 const playersData = snapshot.val();
@@ -357,7 +358,7 @@
                 }
 
                 playerListEl.innerHTML = "";
-                let playerCount = 0;
+                playerCount = 0;
 
                 for (const pId in playersData) {
                     playerCount++;
@@ -368,11 +369,7 @@
                     playerListEl.appendChild(li);
                 }
 
-                if (isRoomHost && playerCount >= 2) {
-                    startGameBtn.classList.remove('hidden');
-                } else {
-                    startGameBtn.classList.add('hidden');
-                }
+                updateStartButtonVisibility();
             });
         }
 
@@ -383,24 +380,37 @@
                 const roomData = snapshot.val();
                 if (!roomData) return;
 
+                roomStatus = roomData.status || "waiting";
+                updateStartButtonVisibility();
+
                 if (roomData.currentBlackCard) {
                     currentBlackCard = roomData.currentBlackCard;
                     renderBlackCard();
                 }
 
-                if (roomData.status === "playing" && myHand.length === 0) {
+                if (roomStatus === "playing" && myHand.length === 0) {
                     dealInitialHand();
                 }
             });
+        }
+
+        function updateStartButtonVisibility() {
+            const startGameBtn = document.getElementById('start-game-btn');
+            // Only show to host if room is waiting and there are at least 2 players
+            if (isRoomHost && roomStatus === "waiting" && playerCount >= 2) {
+                startGameBtn.classList.remove('hidden');
+            } else {
+                startGameBtn.classList.add('hidden');
+            }
         }
 
         function startNewGame() {
             const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
             window.dbGet(roomRef).then((snapshot) => {
                 const roomData = snapshot.val();
-                const playerCount = roomData && roomData.players ? Object.keys(roomData.players).length : 0;
+                const pCount = roomData && roomData.players ? Object.keys(roomData.players).length : 0;
 
-                if (playerCount < 2) {
+                if (pCount < 2) {
                     alert("You need at least 2 players to start the game!");
                     return;
                 }
@@ -461,14 +471,12 @@
             });
         }
 
-        // --- NEW: SELECT A CARD IN HAND ---
         function selectCard(index) {
             selectedCharArrayIdx = index;
-            renderHand(); // re-render hand to update borders
+            renderHand();
             document.getElementById('submit-card-btn').classList.remove('hidden');
         }
 
-        // --- NEW: SUBMIT SELECTED CARD TO FIREBASE ---
         function submitCard() {
             if (selectedCharArrayIdx === null) return;
 
@@ -505,11 +513,14 @@
             myHand = [];
             currentBlackCard = null;
             selectedCharArrayIdx = null;
+            roomStatus = "waiting";
+            playerCount = 0;
             document.getElementById('room-screen').classList.add('hidden');
             document.getElementById('lobby-screen').classList.remove('hidden');
             document.getElementById('hand-container').innerHTML = ""; 
             document.getElementById('black-card-container').innerHTML = ""; 
             document.getElementById('submit-card-btn').classList.add('hidden');
+            document.getElementById('start-game-btn').classList.add('hidden');
         }
 
         function cleanupStaleRooms() {

@@ -25,7 +25,7 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.6);
             text-align: center;
             width: 100%;
-            max-width: 500px;
+            max-width: 550px;
             box-sizing: border-box;
         }
         input, button {
@@ -60,6 +60,11 @@
             color: #000;
             margin-top: 10px;
         }
+        .btn-warning {
+            background-color: #ffb74d;
+            color: #000;
+            margin-top: 10px;
+        }
         .hidden {
             display: none;
         }
@@ -85,9 +90,15 @@
             padding-left: 20px;
             text-align: left;
         }
+        #timer-display {
+            font-size: 20px;
+            font-weight: bold;
+            color: #ff4081;
+            margin: 10px 0;
+        }
         /* Black Card Styling */
         #black-card-container {
-            margin-top: 20px;
+            margin-top: 15px;
             display: flex;
             justify-content: center;
         }
@@ -111,7 +122,7 @@
         }
         /* Table / Submissions Area */
         #table-container {
-            margin-top: 20px;
+            margin-top: 15px;
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
@@ -127,8 +138,8 @@
             color: #000000;
             padding: 10px;
             border-radius: 6px;
-            width: 100px;
-            height: 130px;
+            width: 110px;
+            min-height: 140px;
             font-size: 12px;
             font-weight: bold;
             text-align: left;
@@ -137,6 +148,16 @@
             justify-content: space-between;
             box-sizing: border-box;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 3px solid transparent;
+        }
+        .table-card.voted {
+            border: 3px solid #03dac6;
+        }
+        .table-card button {
+            padding: 6px;
+            font-size: 11px;
+            margin-top: 6px;
+            background-color: #6200ee;
         }
         /* White Card & Selection Styling */
         #hand-container {
@@ -173,6 +194,10 @@
             border: 3px solid #6200ee;
             transform: translateY(-5px);
         }
+        .white-card.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -203,12 +228,10 @@
     <!-- ACTIVE ROOM SCREEN -->
     <div id="room-screen" class="container hidden">
         <h2 id="room-title">Room</h2>
-        <p>Waiting for players...</p>
+        <div id="timer-display" class="hidden">Time Left: <span id="timer-sec">30</span>s</div>
         
         <h3>Players in Room:</h3>
-        <ul id="player-list">
-            <!-- Dynamic players list -->
-        </ul>
+        <ul id="player-list"></ul>
 
         <!-- START GAME BUTTON -->
         <button id="start-game-btn" class="btn-secondary hidden" onclick="startNewGame()">Start Game</button>
@@ -217,7 +240,7 @@
         <div id="black-card-container"></div>
 
         <!-- SHARED TABLE / SUBMISSIONS AREA -->
-        <h4 style="margin: 15px 0 5px 0; color: #aaa;">Round Table (Submissions):</h4>
+        <h4 style="margin: 15px 0 5px 0; color: #aaa;" id="table-heading">Round Table (Submissions):</h4>
         <div id="table-container">
             <p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>
         </div>
@@ -225,10 +248,11 @@
         <!-- AREA WHERE WHITE CARDS WILL SHOW UP -->
         <div id="hand-container"></div>
 
-        <!-- CONFIRM SUBMISSION BUTTON -->
-        <button id="submit-card-btn" class="btn-secondary hidden" onclick="submitCard()">Confirm Selected Card</button>
+        <!-- CONFIRM / UNDO SUBMISSION BUTTONS -->
+        <button id="submit-card-btn" class="btn-secondary hidden" onclick="confirmSubmission()">Lock In Final Submission</button>
+        <button id="undo-card-btn" class="btn-warning hidden" onclick="undoSubmission()">Undo Submission</button>
 
-        <button class="btn-danger" onclick="leaveRoom()">Leave Room</button>
+        <button class="btn-danger" style="margin-top: 15px;" onclick="leaveRoom()">Leave Room</button>
     </div>
 
     <!-- Firebase SDK Modular Imports via CDN -->
@@ -276,8 +300,10 @@
         let selectedCharArrayIdx = null;
         let roomStatus = "waiting";
         let playerCount = 0;
-        let hasSubmitted = false;
+        let isLockedIn = false;
         let cardsLoaded = false;
+        let timerInterval = null;
+        let roundEndTime = null;
 
         window.addEventListener('DOMContentLoaded', () => {
             if (sessionStorage.getItem('cah_authenticated') === 'true') {
@@ -287,10 +313,7 @@
                 if (savedRoomId && savedPlayerName) {
                     document.getElementById('password-screen').classList.add('hidden');
                     document.getElementById('player-name').value = savedPlayerName;
-                    
-                    setTimeout(() => {
-                        joinRoom(savedRoomId, savedPlayerName);
-                    }, 500);
+                    setTimeout(() => { joinRoom(savedRoomId, savedPlayerName); }, 500);
                 } else {
                     document.getElementById('password-screen').classList.add('hidden');
                     document.getElementById('lobby-screen').classList.remove('hidden');
@@ -311,20 +334,15 @@
                 allCardsData = await response.json();
                 
                 allCardsData.forEach(pack => {
-                    if (pack.black) {
-                        blackCards.push(...pack.black);
-                    }
-                    if (pack.white) {
-                        whiteCards.push(...pack.white);
-                    }
+                    if (pack.black) blackCards.push(...pack.black);
+                    if (pack.white) whiteCards.push(...pack.white);
                 });
 
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
                 cardsLoaded = true;
 
-                // If we already joined a room that is playing, deal hand now that cards are loaded
-                if (roomStatus === "playing" && myHand.length === 0) {
+                if (roomStatus === "submitting" && myHand.length === 0) {
                     dealInitialHand();
                 }
             } catch (error) {
@@ -335,16 +353,13 @@
         async function sha256(message) {
             const msgBuffer = new TextEncoder().encode(message);
             const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
         async function checkPassword() {
             const pass = document.getElementById('password-input').value;
             const correctHash = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
-            const userHash = await sha256(pass);
-
-            if (userHash === correctHash) {
+            if ((await sha256(pass)) === correctHash) {
                 sessionStorage.setItem('cah_authenticated', 'true');
                 document.getElementById('password-screen').classList.add('hidden');
                 document.getElementById('lobby-screen').classList.remove('hidden');
@@ -355,33 +370,19 @@
 
         function createRoom() {
             const playerName = document.getElementById('player-name').value.trim();
-            if (!playerName) {
-                alert("Please enter your player name first!");
-                return;
-            }
+            if (!playerName) return alert("Please enter your player name first!");
 
-            const roomsRef = window.dbRef(window.db, 'rooms');
-            const newRoomRef = window.dbPush(roomsRef);
+            const newRoomRef = window.dbPush(window.dbRef(window.db, 'rooms'));
             currentRoomId = newRoomRef.key;
-            
-            const roomData = {
-                host: playerName,
-                status: "waiting"
-            };
 
-            window.dbSet(newRoomRef, roomData).then(() => {
+            window.dbSet(newRoomRef, { host: playerName, status: "waiting" }).then(() => {
                 joinRoom(currentRoomId, playerName);
-            }).catch((error) => {
-                alert("Failed to create room: " + error.message);
             });
         }
 
         function joinRoom(roomId, forcedName = null) {
             const playerName = forcedName || document.getElementById('player-name').value.trim();
-            if (!playerName) {
-                alert("Please enter your player name in the box above before joining!");
-                return;
-            }
+            if (!playerName) return alert("Please enter your name!");
 
             currentPlayerName = playerName;
             currentRoomId = roomId;
@@ -389,19 +390,16 @@
             sessionStorage.setItem('cah_room_id', roomId);
             sessionStorage.setItem('cah_player_name', playerName);
 
-            const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
-            const newPlayerRef = window.dbPush(playersRef);
+            const newPlayerRef = window.dbPush(window.dbRef(window.db, `rooms/${roomId}/players`));
             currentPlayerId = newPlayerRef.key;
 
             window.dbOnDisconnect(newPlayerRef).remove();
 
-            window.dbSet(newPlayerRef, { name: playerName }).then(() => {
+            window.dbSet(newPlayerRef, { name: playerName, score: 0, lockedIn: false }).then(() => {
                 enterRoomView("Room " + roomId.substring(1, 6));
                 listenToRoomPlayers(roomId);
                 listenToRoomStatus(roomId);
                 listenToRoomSubmissions(roomId);
-            }).catch((error) => {
-                alert("Failed to join room: " + error.message);
             });
         }
 
@@ -412,18 +410,11 @@
         }
 
         function listenToRoomPlayers(roomId) {
-            const playersRef = window.dbRef(window.db, `rooms/${roomId}/players`);
-            const playerListEl = document.getElementById('player-list');
-
-            window.dbOnValue(playersRef, (snapshot) => {
+            window.dbOnValue(window.dbRef(window.db, `rooms/${roomId}/players`), (snapshot) => {
                 const playersData = snapshot.val();
-                
-                if (!playersData) {
-                    const roomRef = window.dbRef(window.db, `rooms/${roomId}`);
-                    window.dbRemove(roomRef);
-                    return;
-                }
+                if (!playersData) return;
 
+                const playerListEl = document.getElementById('player-list');
                 playerListEl.innerHTML = "";
                 playerCount = 0;
 
@@ -432,7 +423,8 @@
                     const player = playersData[pId];
                     const li = document.createElement('li');
                     const isYou = pId === currentPlayerId ? " (You)" : "";
-                    li.innerText = player.name + isYou;
+                    const statusTag = player.lockedIn ? " ✅ Locked In" : " ⏳ Choosing";
+                    li.innerText = `${player.name}${isYou} — Points: ${player.score || 0}${roomStatus === 'submitting' ? statusTag : ''}`;
                     playerListEl.appendChild(li);
                 }
 
@@ -441,91 +433,97 @@
         }
 
         function listenToRoomStatus(roomId) {
-            const roomRef = window.dbRef(window.db, `rooms/${roomId}`);
-            
-            window.dbOnValue(roomRef, (snapshot) => {
+            window.dbOnValue(window.dbRef(window.db, `rooms/${roomId}`), (snapshot) => {
                 const roomData = snapshot.val();
                 if (!roomData) return;
 
                 roomStatus = roomData.status || "waiting";
                 roomHostName = roomData.host;
+                roundEndTime = roomData.roundEndTime || null;
+
                 updateStartButtonVisibility();
+                handleTimer(roundEndTime);
 
                 if (roomData.currentBlackCard) {
                     currentBlackCard = roomData.currentBlackCard;
                     renderBlackCard();
                 }
 
-                if (roomStatus === "playing" && myHand.length === 0 && cardsLoaded) {
-                    dealInitialHand();
+                if (roomStatus === "submitting") {
+                    if (myHand.length === 0 && cardsLoaded) dealInitialHand();
+                    document.getElementById('table-heading').innerText = "Submissions (Hidden until voting):";
+                } else if (roomStatus === "voting") {
+                    document.getElementById('table-heading').innerText = "Vote for the Best Card!";
+                    renderVotingTable(roomData.submissions || {}, roomData.votes || {});
                 }
             });
         }
 
-        function listenToRoomSubmissions(roomId) {
-            const submissionsRef = window.dbRef(window.db, `rooms/${roomId}/submissions`);
-            const tableContainer = document.getElementById('table-container');
+        function handleTimer(endTime) {
+            const timerEl = document.getElementById('timer-display');
+            const secEl = document.getElementById('timer-sec');
 
-            window.dbOnValue(submissionsRef, (snapshot) => {
-                const submissionsData = snapshot.val();
-                tableContainer.innerHTML = "";
-
-                if (!submissionsData) {
-                    tableContainer.innerHTML = '<p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>';
-                    return;
-                }
-
-                for (const pId in submissionsData) {
-                    const sub = submissionsData[pId];
-                    const cardDiv = document.createElement('div');
-                    cardDiv.className = 'table-card';
-                    cardDiv.innerHTML = `
-                        <span>${sub.cardText}</span>
-                        <span style="font-size: 9px; color: #555;">- ${sub.playerName}</span>
-                    `;
-                    tableContainer.appendChild(cardDiv);
-                }
-            });
-        }
-
-        function updateStartButtonVisibility() {
-            const startGameBtn = document.getElementById('start-game-btn');
-            const isReallyHost = (currentPlayerName === roomHostName);
-
-            if (isReallyHost && roomStatus === "waiting" && playerCount >= 2) {
-                startGameBtn.classList.remove('hidden');
-            } else {
-                startGameBtn.classList.add('hidden');
+            if (!endTime || roomStatus !== "submitting") {
+                clearInterval(timerInterval);
+                timerEl.classList.add('hidden');
+                return;
             }
+
+            timerEl.classList.remove('hidden');
+            clearInterval(timerInterval);
+
+            timerInterval = setInterval(() => {
+                const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+                secEl.innerText = remaining;
+
+                if (remaining <= 0) {
+                    clearInterval(timerInterval);
+                    if (!isLockedIn) {
+                        if (selectedCharArrayIdx === null && myHand.length > 0) {
+                            selectedCharArrayIdx = 0;
+                        }
+                        confirmSubmission();
+                    }
+                    checkAndTriggerVotingPhase();
+                }
+            }, 1000);
         }
 
         function startNewGame() {
             const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
-            window.dbGet(roomRef).then((snapshot) => {
-                const roomData = snapshot.val();
-                const pCount = roomData && roomData.players ? Object.keys(roomData.players).length : 0;
+            if (blackCards.length > 0) {
+                const pickedBlack = blackCards.pop();
+                const endTime = Date.now() + 30000;
 
-                if (pCount < 2) {
-                    alert("You need at least 2 players to start the game!");
-                    return;
-                }
+                // Reset player lock status for the new round
+                window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}/players`)).then((snap) => {
+                    if (snap.exists()) {
+                        const players = snap.val();
+                        for (const pId in players) {
+                            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${pId}`), { lockedIn: false });
+                        }
+                    }
+                });
 
-                if (blackCards.length > 0) {
-                    const pickedBlack = blackCards.pop();
-                    window.dbUpdate(roomRef, {
-                        status: "playing",
-                        currentBlackCard: pickedBlack
-                    });
-                }
-            });
+                isLockedIn = false;
+                selectedCharArrayIdx = null;
+                document.getElementById('undo-card-btn').classList.add('hidden');
+                document.getElementById('submit-card-btn').classList.add('hidden');
+
+                window.dbUpdate(roomRef, {
+                    status: "submitting",
+                    currentBlackCard: pickedBlack,
+                    roundEndTime: endTime,
+                    submissions: null,
+                    votes: null
+                });
+            }
         }
 
         function dealInitialHand() {
             myHand = [];
             for (let i = 0; i < 7; i++) {
-                if (whiteCards.length > 0) {
-                    myHand.push(whiteCards.pop());
-                }
+                if (whiteCards.length > 0) myHand.push(whiteCards.pop());
             }
             renderHand();
         }
@@ -534,14 +532,12 @@
             const blackContainer = document.getElementById('black-card-container');
             blackContainer.innerHTML = "";
             if (currentBlackCard) {
-                const blackText = (typeof currentBlackCard === 'object' && currentBlackCard !== null) ? currentBlackCard.text : currentBlackCard;
-                const blackDiv = document.createElement('div');
-                blackDiv.className = 'black-card';
-                blackDiv.innerHTML = `
-                    <span>${blackText}</span>
-                    <span style="font-size: 10px; color: #aaa;">Cards Against Humanity</span>
-                `;
-                blackContainer.appendChild(blackDiv);
+                const text = typeof currentBlackCard === 'object' ? currentBlackCard.text : currentBlackCard;
+                blackContainer.innerHTML = `
+                    <div class="black-card">
+                        <span>${text}</span>
+                        <span style="font-size: 10px; color: #aaa;">Cards Against Humanity</span>
+                    </div>`;
             }
         }
 
@@ -549,56 +545,145 @@
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = ""; 
 
-            if (hasSubmitted) {
-                handContainer.innerHTML = '<p style="color: #03dac6; font-weight: bold;">Card submitted! Waiting for other players...</p>';
-                return;
-            }
-
             myHand.forEach((card, index) => {
-                const cardText = (typeof card === 'object' && card !== null) ? card.text : card;
+                const cardText = typeof card === 'object' ? card.text : card;
                 const cardDiv = document.createElement('div');
-                cardDiv.className = 'white-card';
-                if (selectedCharArrayIdx === index) {
-                    cardDiv.classList.add('selected');
-                }
-                cardDiv.onclick = () => selectCard(index);
-                cardDiv.innerHTML = `
-                    <span>${cardText}</span>
-                    <span style="font-size: 10px; color: #555;">CAH</span>
-                `;
+                cardDiv.className = `white-card ${isLockedIn ? 'disabled' : ''}`;
+                if (selectedCharArrayIdx === index) cardDiv.classList.add('selected');
+                
+                cardDiv.onclick = () => {
+                    if (!isLockedIn) selectCard(index);
+                };
+                cardDiv.innerHTML = `<span>${cardText}</span><span style="font-size: 10px; color: #555;">CAH</span>`;
                 handContainer.appendChild(cardDiv);
             });
         }
 
         function selectCard(index) {
-            if (hasSubmitted) return;
             selectedCharArrayIdx = index;
             renderHand();
             document.getElementById('submit-card-btn').classList.remove('hidden');
         }
 
-        function submitCard() {
-            if (selectedCharArrayIdx === null || hasSubmitted) return;
+        function confirmSubmission() {
+            if (selectedCharArrayIdx === null) return;
 
             const chosenCard = myHand[selectedCharArrayIdx];
-            const cardText = (typeof chosenCard === 'object' && chosenCard !== null) ? chosenCard.text : chosenCard;
+            const cardText = typeof chosenCard === 'object' ? chosenCard.text : chosenCard;
 
-            const submissionRef = window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`);
-            window.dbSet(submissionRef, {
+            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`), {
                 playerName: currentPlayerName,
                 cardText: cardText
-            }).then(() => {
-                hasSubmitted = true;
-                myHand.splice(selectedCharArrayIdx, 1);
-                if (whiteCards.length > 0) {
-                    myHand.push(whiteCards.pop());
-                }
-                selectedCharArrayIdx = null;
-                document.getElementById('submit-card-btn').classList.add('hidden');
-                renderHand();
-            }).catch((error) => {
-                alert("Failed to submit card: " + error.message);
             });
+
+            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`), {
+                lockedIn: true
+            });
+
+            isLockedIn = true;
+            document.getElementById('submit-card-btn').classList.add('hidden');
+            document.getElementById('undo-card-btn').classList.remove('hidden');
+            renderHand();
+
+            checkAndTriggerVotingPhase();
+        }
+
+        function undoSubmission() {
+            if (!isLockedIn || roomStatus !== "submitting") return;
+
+            window.dbRemove(window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`));
+            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`), {
+                lockedIn: false
+            });
+
+            isLockedIn = false;
+            document.getElementById('undo-card-btn').classList.add('hidden');
+            document.getElementById('submit-card-btn').classList.remove('hidden');
+            renderHand();
+        }
+
+        function checkAndTriggerVotingPhase() {
+            if (currentPlayerName !== roomHostName) return;
+
+            window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}`)).then((snapshot) => {
+                const roomData = snapshot.val();
+                if (!roomData || roomData.status !== "submitting") return;
+
+                const players = roomData.players || {};
+                const submissions = roomData.submissions || {};
+
+                const playerKeys = Object.keys(players);
+                const submissionKeys = Object.keys(submissions);
+
+                if (submissionKeys.length >= playerKeys.length || (roundEndTime && Date.now() >= roundEndTime)) {
+                    window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
+                        status: "voting"
+                    });
+                }
+            });
+        }
+
+        function listenToRoomSubmissions(roomId) {
+            window.dbOnValue(window.dbRef(window.db, `rooms/${roomId}/submissions`), (snapshot) => {
+                const submissionsData = snapshot.val();
+                const tableContainer = document.getElementById('table-container');
+
+                if (roomStatus === "submitting") {
+                    const count = submissionsData ? Object.keys(submissionsData).length : 0;
+                    tableContainer.innerHTML = `<p style="color: #aaa; font-size: 14px; margin: auto;">${count} card(s) locked in face-down...</p>`;
+                }
+            });
+        }
+
+        function renderVotingTable(submissions, votes) {
+            const tableContainer = document.getElementById('table-container');
+            tableContainer.innerHTML = "";
+
+            if (Object.keys(submissions).length === 0) {
+                tableContainer.innerHTML = `<p style="color: #888;">No cards were submitted this round.</p>`;
+                return;
+            }
+
+            const myVoteTarget = votes[currentPlayerId];
+
+            for (const subPlayerId in submissions) {
+                const sub = submissions[subPlayerId];
+                const isMyCard = subPlayerId === currentPlayerId;
+                const isVotedThis = myVoteTarget === subPlayerId;
+
+                const cardDiv = document.createElement('div');
+                cardDiv.className = `table-card ${isVotedThis ? 'voted' : ''}`;
+                cardDiv.innerHTML = `
+                    <span>${sub.cardText}</span>
+                    <div>
+                        <span style="font-size:9px; color:#555;">${isMyCard ? '(Your Card)' : ''}</span>
+                        <button onclick="castVote('${subPlayerId}')">${isVotedThis ? 'Voted ✓' : 'Vote'}</button>
+                    </div>
+                `;
+                tableContainer.appendChild(cardDiv);
+            }
+        }
+
+        function castVote(targetPlayerId) {
+            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
+                // Refresh hand to draw replacement card for next round
+                if (selectedCharArrayIdx !== null) {
+                    myHand.splice(selectedCharArrayIdx, 1);
+                    if (whiteCards.length > 0) myHand.push(whiteCards.pop());
+                    selectedCharArrayIdx = null;
+                }
+                renderHand();
+            });
+        }
+
+        function updateStartButtonVisibility() {
+            const btn = document.getElementById('start-game-btn');
+            if (currentPlayerName === roomHostName && (roomStatus === "waiting" || roomStatus === "voting") && playerCount >= 2) {
+                btn.classList.remove('hidden');
+                btn.innerText = roomStatus === "waiting" ? "Start Game" : "Next Round";
+            } else {
+                btn.classList.add('hidden');
+            }
         }
 
         function leaveRoom() {
@@ -606,78 +691,38 @@
             sessionStorage.removeItem('cah_player_name');
 
             if (currentRoomId && currentPlayerId) {
-                const playerRef = window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`);
-                window.dbRemove(playerRef).then(() => {
-                    const playersRef = window.dbRef(window.db, `rooms/${currentRoomId}/players`);
-                    window.dbGet(playersRef).then((snapshot) => {
-                        if (!snapshot.exists()) {
-                            const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
-                            window.dbRemove(roomRef);
-                        }
-                    });
-                });
+                window.dbRemove(window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`));
             }
-            currentRoomId = null;
-            currentPlayerId = null;
-            roomHostName = null;
-            myHand = [];
-            currentBlackCard = null;
-            selectedCharArrayIdx = null;
-            roomStatus = "waiting";
-            playerCount = 0;
-            hasSubmitted = false;
-            document.getElementById('room-screen').classList.add('hidden');
-            document.getElementById('lobby-screen').classList.remove('hidden');
-            document.getElementById('hand-container').innerHTML = ""; 
-            document.getElementById('black-card-container').innerHTML = ""; 
-            document.getElementById('table-container').innerHTML = '<p style="color: #666; font-size: 13px; margin: auto;">No cards submitted yet.</p>';
-            document.getElementById('submit-card-btn').classList.add('hidden');
-            document.getElementById('start-game-btn').classList.add('hidden');
+            location.reload();
         }
 
         function cleanupStaleRooms() {
-            const roomsRef = window.dbRef(window.db, 'rooms');
-            window.dbGet(roomsRef).then((snapshot) => {
-                if (!snapshot.exists()) {
-                    alert("No rooms to clean.");
-                    return;
-                }
-
+            window.dbGet(window.dbRef(window.db, 'rooms')).then((snapshot) => {
+                if (!snapshot.exists()) return alert("No rooms to clean.");
                 const rooms = snapshot.val();
-                let cleanedCount = 0;
-
-                for (const roomId in rooms) {
-                    const room = rooms[roomId];
-                    if (!room.players || Object.keys(room.players).length === 0) {
-                        window.dbRemove(window.dbRef(window.db, `rooms/${roomId}`));
-                        cleanedCount++;
+                let cleaned = 0;
+                for (const rId in rooms) {
+                    if (!rooms[rId].players) {
+                        window.dbRemove(window.dbRef(window.db, `rooms/${rId}`));
+                        cleaned++;
                     }
                 }
-                alert(`Cleanup complete! Removed ${cleanedCount} empty room(s).`);
+                alert(`Cleaned ${cleaned} room(s).`);
             });
         }
 
         function loadRooms() {
-            const roomsListEl = document.getElementById('rooms-list');
-            const roomsRef = window.dbRef(window.db, 'rooms');
-
-            window.dbOnValue(roomsRef, (snapshot) => {
+            window.dbOnValue(window.dbRef(window.db, 'rooms'), (snapshot) => {
                 const data = snapshot.val();
+                const roomsListEl = document.getElementById('rooms-list');
                 roomsListEl.innerHTML = "";
 
-                if (!data) {
-                    roomsListEl.innerHTML = '<p style="color: #888;">No active rooms. Create one above!</p>';
-                    return;
-                }
+                if (!data) return roomsListEl.innerHTML = '<p style="color: #888;">No active rooms.</p>';
 
                 for (const roomId in data) {
-                    const room = data[roomId];
                     const roomDiv = document.createElement('div');
                     roomDiv.className = 'room-item';
-                    roomDiv.innerHTML = `
-                        <span><strong>${room.host}'s Room</strong></span>
-                        <button onclick="joinRoom('${roomId}')">Join</button>
-                    `;
+                    roomDiv.innerHTML = `<span><strong>${data[roomId].host}'s Room</strong></span><button onclick="joinRoom('${roomId}')">Join</button>`;
                     roomsListEl.appendChild(roomDiv);
                 }
             });

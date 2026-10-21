@@ -341,13 +341,17 @@
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
                 cardsLoaded = true;
+                console.log(`Cards loaded successfully! Black: ${blackCards.length}, White: ${whiteCards.length}`);
 
-                // Fix: Deal hand if room is already in submitting/playing status
+                // Update start button visibility now that cards are ready
+                updateStartButtonVisibility();
+
                 if ((roomStatus === "submitting" || roomStatus === "playing") && myHand.length === 0) {
                     dealInitialHand();
                 }
             } catch (error) {
                 console.error("Error loading cards:", error);
+                alert("Failed to load cards JSON file! Make sure cah-all-full.json is in the same folder.");
             }
         }
 
@@ -494,33 +498,36 @@
         }
 
         function startNewGame() {
-            const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
-            if (blackCards.length > 0) {
-                const pickedBlack = blackCards.pop();
-                const endTime = Date.now() + 30000;
-
-                window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}/players`)).then((snap) => {
-                    if (snap.exists()) {
-                        const players = snap.val();
-                        for (const pId in players) {
-                            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${pId}`), { lockedIn: false });
-                        }
-                    }
-                });
-
-                isLockedIn = false;
-                selectedCharArrayIdx = null;
-                document.getElementById('undo-card-btn').classList.add('hidden');
-                document.getElementById('submit-card-btn').classList.add('hidden');
-
-                window.dbUpdate(roomRef, {
-                    status: "submitting",
-                    currentBlackCard: pickedBlack,
-                    roundEndTime: endTime,
-                    submissions: null,
-                    votes: null
-                });
+            if (!cardsLoaded || blackCards.length === 0) {
+                alert("Cards are still loading or failed to load. Please wait a moment and try again.");
+                return;
             }
+
+            const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
+            const pickedBlack = blackCards.pop();
+            const endTime = Date.now() + 30000;
+
+            window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}/players`)).then((snap) => {
+                if (snap.exists()) {
+                    const players = snap.val();
+                    for (const pId in players) {
+                        window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${pId}`), { lockedIn: false });
+                    }
+                }
+            });
+
+            isLockedIn = false;
+            selectedCharArrayIdx = null;
+            document.getElementById('undo-card-btn').classList.add('hidden');
+            document.getElementById('submit-card-btn').classList.add('hidden');
+
+            window.dbUpdate(roomRef, {
+                status: "submitting",
+                currentBlackCard: pickedBlack,
+                roundEndTime: endTime,
+                submissions: null,
+                votes: null
+            });
         }
 
         function dealInitialHand() {
@@ -680,7 +687,10 @@
 
         function updateStartButtonVisibility() {
             const btn = document.getElementById('start-game-btn');
-            if (currentPlayerName === roomHostName && (roomStatus === "waiting" || roomStatus === "voting") && playerCount >= 2) {
+            const isReallyHost = (currentPlayerName === roomHostName);
+            const validStatus = (roomStatus === "waiting" || roomStatus === "voting");
+
+            if (isReallyHost && validStatus && playerCount >= 2 && cardsLoaded) {
                 btn.classList.remove('hidden');
                 btn.innerText = roomStatus === "waiting" ? "Start Game" : "Next Round";
             } else {

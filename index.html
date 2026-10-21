@@ -333,25 +333,40 @@
                 const response = await fetch('cah-all-full.json');
                 allCardsData = await response.json();
                 
-                allCardsData.forEach(pack => {
-                    if (pack.black) blackCards.push(...pack.black);
-                    if (pack.white) whiteCards.push(...pack.white);
-                });
+                blackCards = [];
+                whiteCards = [];
+
+                // Universal JSON parsing for array of packs or root object
+                if (Array.isArray(allCardsData)) {
+                    allCardsData.forEach(pack => {
+                        if (pack.black) blackCards.push(...pack.black);
+                        if (pack.white) whiteCards.push(...pack.white);
+                    });
+                } else if (allCardsData && typeof allCardsData === 'object') {
+                    if (allCardsData.black) blackCards.push(...allCardsData.black);
+                    if (allCardsData.white) whiteCards.push(...allCardsData.white);
+
+                    for (const key in allCardsData) {
+                        if (allCardsData[key] && typeof allCardsData[key] === 'object') {
+                            if (allCardsData[key].black) blackCards.push(...allCardsData[key].black);
+                            if (allCardsData[key].white) whiteCards.push(...allCardsData[key].white);
+                        }
+                    }
+                }
 
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
                 cardsLoaded = true;
-                console.log(`Cards loaded successfully! Black: ${blackCards.length}, White: ${whiteCards.length}`);
+                console.log(`Cards loaded! Black cards: ${blackCards.length}, White cards: ${whiteCards.length}`);
 
-                // Update start button visibility now that cards are ready
                 updateStartButtonVisibility();
 
-                if ((roomStatus === "submitting" || roomStatus === "playing") && myHand.length === 0) {
-                    dealInitialHand();
+                if (roomStatus === "submitting" || roomStatus === "playing") {
+                    ensureHandDealt();
                 }
             } catch (error) {
                 console.error("Error loading cards:", error);
-                alert("Failed to load cards JSON file! Make sure cah-all-full.json is in the same folder.");
+                alert("Failed to load cards JSON file! Check console.");
             }
         }
 
@@ -454,11 +469,8 @@
                     renderBlackCard();
                 }
 
-                if ((roomStatus === "submitting" || roomStatus === "playing") && myHand.length === 0 && cardsLoaded) {
-                    dealInitialHand();
-                }
-
-                if (roomStatus === "submitting") {
+                if (roomStatus === "submitting" || roomStatus === "playing") {
+                    ensureHandDealt();
                     document.getElementById('table-heading').innerText = "Submissions (Hidden until voting):";
                 } else if (roomStatus === "voting") {
                     document.getElementById('table-heading').innerText = "Vote for the Best Card!";
@@ -499,7 +511,7 @@
 
         function startNewGame() {
             if (!cardsLoaded || blackCards.length === 0) {
-                alert("Cards are still loading or failed to load. Please wait a moment and try again.");
+                alert("Cards are still loading. Please wait a moment.");
                 return;
             }
 
@@ -530,10 +542,10 @@
             });
         }
 
-        function dealInitialHand() {
-            myHand = [];
-            for (let i = 0; i < 7; i++) {
-                if (whiteCards.length > 0) myHand.push(whiteCards.pop());
+        function ensureHandDealt() {
+            if (!cardsLoaded) return;
+            while (myHand.length < 7 && whiteCards.length > 0) {
+                myHand.push(whiteCards.pop());
             }
             renderHand();
         }
@@ -678,10 +690,9 @@
             window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
                 if (selectedCharArrayIdx !== null) {
                     myHand.splice(selectedCharArrayIdx, 1);
-                    if (whiteCards.length > 0) myHand.push(whiteCards.pop());
                     selectedCharArrayIdx = null;
                 }
-                renderHand();
+                ensureHandDealt();
             });
         }
 

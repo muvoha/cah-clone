@@ -342,7 +342,8 @@
                 shuffleArray(whiteCards);
                 cardsLoaded = true;
 
-                if (roomStatus === "submitting" && myHand.length === 0) {
+                // Fix: Deal hand if room is already in submitting/playing status
+                if ((roomStatus === "submitting" || roomStatus === "playing") && myHand.length === 0) {
                     dealInitialHand();
                 }
             } catch (error) {
@@ -449,8 +450,11 @@
                     renderBlackCard();
                 }
 
+                if ((roomStatus === "submitting" || roomStatus === "playing") && myHand.length === 0 && cardsLoaded) {
+                    dealInitialHand();
+                }
+
                 if (roomStatus === "submitting") {
-                    if (myHand.length === 0 && cardsLoaded) dealInitialHand();
                     document.getElementById('table-heading').innerText = "Submissions (Hidden until voting):";
                 } else if (roomStatus === "voting") {
                     document.getElementById('table-heading').innerText = "Vote for the Best Card!";
@@ -495,7 +499,6 @@
                 const pickedBlack = blackCards.pop();
                 const endTime = Date.now() + 30000;
 
-                // Reset player lock status for the new round
                 window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}/players`)).then((snap) => {
                     if (snap.exists()) {
                         const players = snap.val();
@@ -666,7 +669,6 @@
 
         function castVote(targetPlayerId) {
             window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
-                // Refresh hand to draw replacement card for next round
                 if (selectedCharArrayIdx !== null) {
                     myHand.splice(selectedCharArrayIdx, 1);
                     if (whiteCards.length > 0) myHand.push(whiteCards.pop());

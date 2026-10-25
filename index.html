@@ -273,6 +273,11 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
+        // Sync server time offset across all clients
+        onValue(ref(db, ".info/serverTimeOffset"), (snapshot) => {
+            window.serverTimeOffset = snapshot.val() || 0;
+        });
+
         window.db = db;
         window.dbRef = ref;
         window.dbSet = set;
@@ -490,7 +495,9 @@
             clearInterval(timerInterval);
 
             timerInterval = setInterval(() => {
-                const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+                const offset = window.serverTimeOffset || 0;
+                const nowSynced = Date.now() + offset;
+                const remaining = Math.max(0, Math.ceil((endTime - nowSynced) / 1000));
                 secEl.innerText = remaining;
 
                 if (remaining <= 0) {
@@ -514,7 +521,8 @@
 
             const roomRef = window.dbRef(window.db, `rooms/${currentRoomId}`);
             const pickedBlack = blackCards.pop();
-            const endTime = Date.now() + 30000;
+            const offset = window.serverTimeOffset || 0;
+            const endTime = Date.now() + offset + 30000;
 
             window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}/players`)).then((snap) => {
                 if (snap.exists()) {
@@ -593,7 +601,6 @@
             const chosenCard = myHand[selectedCharArrayIdx];
             const cardText = typeof chosenCard === 'object' ? chosenCard.text : chosenCard;
 
-            // Remove card from hand immediately and replenish
             myHand.splice(selectedCharArrayIdx, 1);
             ensureHandDealt();
             selectedCharArrayIdx = null;
@@ -609,14 +616,14 @@
 
             isLockedIn = true;
             document.getElementById('submit-card-btn').classList.add('hidden');
-            document.getElementById('undo-card-btn').classList.add('hidden'); // Once locked in, lock it permanently for this round
+            document.getElementById('undo-card-btn').classList.add('hidden');
             renderHand();
 
             checkAndTriggerVotingPhase();
         }
 
         function undoSubmission() {
-            // For peer voting without czar, locking in is final once confirmed or timer expires.
+            // Locking in is final for peer voting.
         }
 
         function checkAndTriggerVotingPhase() {
@@ -630,7 +637,10 @@
                 const playerKeys = Object.keys(players);
                 const submissionKeys = Object.keys(submissions);
 
-                if (playerKeys.length > 0 && (submissionKeys.length >= playerKeys.length || (roundEndTime && Date.now() >= roundEndTime))) {
+                const offset = window.serverTimeOffset || 0;
+                const timeExpired = roomData.roundEndTime && (Date.now() + offset >= roomData.roundEndTime);
+
+                if (playerKeys.length > 0 && (submissionKeys.length >= playerKeys.length || timeExpired)) {
                     window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
                         status: "voting"
                     });

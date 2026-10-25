@@ -336,7 +336,6 @@
                 blackCards = [];
                 whiteCards = [];
 
-                // Universal JSON parsing for array of packs or root object
                 if (Array.isArray(allCardsData)) {
                     allCardsData.forEach(pack => {
                         if (pack.black) blackCards.push(...pack.black);
@@ -357,7 +356,6 @@
                 shuffleArray(blackCards);
                 shuffleArray(whiteCards);
                 cardsLoaded = true;
-                console.log(`Cards loaded! Black cards: ${blackCards.length}, White cards: ${whiteCards.length}`);
 
                 updateStartButtonVisibility();
 
@@ -366,7 +364,6 @@
                 }
             } catch (error) {
                 console.error("Error loading cards:", error);
-                alert("Failed to load cards JSON file! Check console.");
             }
         }
 
@@ -498,7 +495,7 @@
 
                 if (remaining <= 0) {
                     clearInterval(timerInterval);
-                    if (!isLockedIn) {
+                    if (!isLockedIn && roomStatus === "submitting") {
                         if (selectedCharArrayIdx === null && myHand.length > 0) {
                             selectedCharArrayIdx = 0;
                         }
@@ -588,10 +585,18 @@
         }
 
         function confirmSubmission() {
+            if (selectedCharArrayIdx === null && myHand.length > 0) {
+                selectedCharArrayIdx = 0;
+            }
             if (selectedCharArrayIdx === null) return;
 
             const chosenCard = myHand[selectedCharArrayIdx];
             const cardText = typeof chosenCard === 'object' ? chosenCard.text : chosenCard;
+
+            // Remove card from hand immediately and replenish
+            myHand.splice(selectedCharArrayIdx, 1);
+            ensureHandDealt();
+            selectedCharArrayIdx = null;
 
             window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`), {
                 playerName: currentPlayerName,
@@ -604,29 +609,17 @@
 
             isLockedIn = true;
             document.getElementById('submit-card-btn').classList.add('hidden');
-            document.getElementById('undo-card-btn').classList.remove('hidden');
+            document.getElementById('undo-card-btn').classList.add('hidden'); // Once locked in, lock it permanently for this round
             renderHand();
 
             checkAndTriggerVotingPhase();
         }
 
         function undoSubmission() {
-            if (!isLockedIn || roomStatus !== "submitting") return;
-
-            window.dbRemove(window.dbRef(window.db, `rooms/${currentRoomId}/submissions/${currentPlayerId}`));
-            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${currentPlayerId}`), {
-                lockedIn: false
-            });
-
-            isLockedIn = false;
-            document.getElementById('undo-card-btn').classList.add('hidden');
-            document.getElementById('submit-card-btn').classList.remove('hidden');
-            renderHand();
+            // For peer voting without czar, locking in is final once confirmed or timer expires.
         }
 
         function checkAndTriggerVotingPhase() {
-            if (currentPlayerName !== roomHostName) return;
-
             window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}`)).then((snapshot) => {
                 const roomData = snapshot.val();
                 if (!roomData || roomData.status !== "submitting") return;
@@ -637,7 +630,7 @@
                 const playerKeys = Object.keys(players);
                 const submissionKeys = Object.keys(submissions);
 
-                if (submissionKeys.length >= playerKeys.length || (roundEndTime && Date.now() >= roundEndTime)) {
+                if (playerKeys.length > 0 && (submissionKeys.length >= playerKeys.length || (roundEndTime && Date.now() >= roundEndTime))) {
                     window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
                         status: "voting"
                     });
@@ -687,13 +680,7 @@
         }
 
         function castVote(targetPlayerId) {
-            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
-                if (selectedCharArrayIdx !== null) {
-                    myHand.splice(selectedCharArrayIdx, 1);
-                    selectedCharArrayIdx = null;
-                }
-                ensureHandDealt();
-            });
+            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId);
         }
 
         function updateStartButtonVisibility() {

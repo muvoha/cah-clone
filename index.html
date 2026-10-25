@@ -153,6 +153,10 @@
         .table-card.voted {
             border: 3px solid #03dac6;
         }
+        .table-card.winner {
+            border: 3px solid #ffb74d;
+            background-color: #fff8e1;
+        }
         .table-card button {
             padding: 6px;
             font-size: 11px;
@@ -476,6 +480,9 @@
                 } else if (roomStatus === "voting") {
                     document.getElementById('table-heading').innerText = "Vote for the Best Card!";
                     renderVotingTable(roomData.submissions || {}, roomData.votes || {});
+                } else if (roomStatus === "round-over") {
+                    document.getElementById('table-heading').innerText = `Round Over! Winner: ${roomData.winningPlayerName || 'Nobody'}`;
+                    renderRoundOverTable(roomData.submissions || {}, roomData.winningPlayerId);
                 }
             });
         }
@@ -541,7 +548,9 @@
                 currentBlackCard: pickedBlack,
                 roundEndTime: endTime,
                 submissions: null,
-                votes: null
+                votes: null,
+                winningPlayerId: null,
+                winningPlayerName: null
             });
         }
 
@@ -684,9 +693,28 @@
             }
         }
 
+        function renderRoundOverTable(submissions, winningPlayerId) {
+            const tableContainer = document.getElementById('table-container');
+            tableContainer.innerHTML = "";
+
+            for (const subPlayerId in submissions) {
+                const sub = submissions[subPlayerId];
+                const isWinner = subPlayerId === winningPlayerId;
+
+                const cardDiv = document.createElement('div');
+                cardDiv.className = `table-card ${isWinner ? 'winner' : ''}`;
+                cardDiv.innerHTML = `
+                    <span>${sub.cardText}</span>
+                    <div style="font-size:10px; color:#333; margin-top:5px;">
+                        <strong>${sub.playerName}</strong> ${isWinner ? '👑 (Winner)' : ''}
+                    </div>
+                `;
+                tableContainer.appendChild(cardDiv);
+            }
+        }
+
         function castVote(targetPlayerId) {
             window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
-                // Check if all votes are in after casting
                 checkAndTallyVotes();
             });
         }
@@ -702,7 +730,6 @@
                 const playerKeys = Object.keys(players);
                 const voteKeys = Object.keys(votes);
 
-                // If everyone has voted, tally the scores!
                 if (playerKeys.length > 0 && voteKeys.length >= playerKeys.length) {
                     tallyScores(roomData);
                 }
@@ -714,14 +741,12 @@
             const submissions = roomData.submissions || {};
             const players = roomData.players || {};
 
-            // Count vote tallies per target player ID
             const voteCounts = {};
             for (const voterId in votes) {
                 const targetId = votes[voterId];
                 voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
             }
 
-            // Find the card with the most votes
             let winningPlayerId = null;
             let maxVotes = -1;
             for (const targetId in voteCounts) {
@@ -731,7 +756,6 @@
                 }
             }
 
-            // Update winner score in Firebase
             if (winningPlayerId && players[winningPlayerId]) {
                 const currentScore = players[winningPlayerId].score || 0;
                 window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${winningPlayerId}`), {
@@ -739,18 +763,18 @@
                 });
             }
 
-            // Announce winner and set status to round-over
-            const winnerName = players[winningPlayerId] ? players[winningPlayerId].name : "Someone";
+            const winnerName = players[winningPlayerId] ? players[winningPlayerId].name : "Nobody";
             window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
                 status: "round-over",
-                roundWinner: winnerName
+                winningPlayerId: winningPlayerId,
+                winningPlayerName: winnerName
             });
         }
 
         function updateStartButtonVisibility() {
             const btn = document.getElementById('start-game-btn');
             const isReallyHost = (currentPlayerName === roomHostName);
-            const validStatus = (roomStatus === "waiting" || roomStatus === "voting" || roomStatus === "round-over");
+            const validStatus = (roomStatus === "waiting" || roomStatus === "round-over");
 
             if (isReallyHost && validStatus && playerCount >= 2 && cardsLoaded) {
                 btn.classList.remove('hidden');

@@ -190,3 +190,1023 @@
         .white-card.selected { border-color: #6200ee; transform: translateY(-5px); }
         .white-card.disabled { opacity: 0.6; cursor: default; }
         .white-card.disabled:hover { background-color: #ffffff; transform: none; }
+        .white-card.selected.disabled { opacity: 1; }
+        .badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #6200ee;
+            color: #fff;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            line-height: 22px;
+            text-align: center;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- PASSWORD SCREEN -->
+    <div id="password-screen" class="container">
+        <h2>CAH Clone</h2>
+        <p>Enter password to access:</p>
+        <input type="password" id="password-input" placeholder="Password">
+        <button id="password-btn">Enter</button>
+    </div>
+
+    <!-- LOBBY SCREEN -->
+    <div id="lobby-screen" class="container hidden">
+        <h2>Game Lobby</h2>
+        <div id="load-error" class="error-banner hidden"></div>
+        <input type="text" id="player-name" maxlength="24" placeholder="Enter your player name">
+        <label class="setting">Points to win <input type="number" id="points-to-win" min="1" max="20" value="5"></label>
+        <button id="create-room-btn">Create New Room</button>
+
+        <hr style="border: 0; border-top: 1px solid #444; margin: 20px 0;">
+
+        <h3>Available Rooms</h3>
+        <div id="rooms-list"><p class="muted">Loading rooms...</p></div>
+        <button class="btn-secondary" id="cleanup-btn">Clear Empty Rooms</button>
+    </div>
+
+    <!-- ROOM SCREEN -->
+    <div id="room-screen" class="container hidden">
+        <h2 id="room-title">Room</h2>
+        <div id="round-info"></div>
+        <div id="timer-display" class="hidden"><span id="timer-label"></span> <span id="timer-sec">0</span>s</div>
+
+        <h3>Players</h3>
+        <ul id="player-list"></ul>
+
+        <div id="black-card-container"></div>
+
+        <h4 id="table-heading"></h4>
+        <div id="table-container"></div>
+
+        <h4 id="hand-heading"></h4>
+        <div id="hand-container"></div>
+
+        <button id="submit-card-btn" class="btn-secondary hidden">Lock In</button>
+        <button id="undo-card-btn" class="btn-warning hidden">Undo Submission</button>
+        <button id="host-btn" class="btn-secondary hidden"></button>
+        <button id="skip-btn" class="btn-warning hidden">Skip Timer (host)</button>
+        <button id="leave-btn" class="btn-danger" style="margin-top: 15px;">Leave Room</button>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, update, push, onValue, remove, onDisconnect, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCx_cYc7rA03ohzMqeuti5gG1qa1K7JVrM",
+            authDomain: "cah-clone-b60b4.firebaseapp.com",
+            databaseURL: "https://cah-clone-b60b4-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "cah-clone-b60b4",
+            storageBucket: "cah-clone-b60b4.appspot.com",
+            messagingSenderId: "976107171722",
+            appId: "1:976107171722:web:9edca7e092d80d20912273"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        /* ------------------------------------------------------------------
+         * CONFIG
+         * ------------------------------------------------------------------ */
+        const CONFIG = {
+            HAND_SIZE: 7,
+            SUBMIT_SECONDS: 45,
+            VOTE_SECONDS: 30,
+            GRACE_MS: 2000,          // host waits this long after the submit timer so clients can auto-submit
+            MIN_PLAYERS: 2,
+            DEFAULT_POINTS_TO_WIN: 5
+        };
+
+        /* ------------------------------------------------------------------
+         * GLOBAL STATE
+         *   S      = latest snapshot of the whole room (the single source of truth)
+         *   local  = tiny amount of client-only state (selection, guards)
+         * ------------------------------------------------------------------ */
+        let serverOffset = 0;
+        onValue(ref(db, ".info/serverTimeOffset"), (snap) => { serverOffset = snap.val() || 0; });
+        const now = () => Date.now() + serverOffset;
+
+        const $ = (id) => document.getElementById(id);
+
+        const CARDS = { white: [], black: [] };
+        let cardsLoaded = false;
+
+        let roomId = null;
+        let myId = null;
+        let myName = null;
+        let S = null;
+        let leaving = false;
+        let lastScore = 0;
+        let tickStarted = false;
+
+        const local = {
+            selKey: null,       // "game:round" the current selection belongs to
+            selection: [],      // card ids (indices into CARDS.white), in pick order
+            autoKey: null,      // round for which auto-submit already ran
+            hostKey: null,      // last host action key (prevents duplicate transitions)
+            promoKey: null,
+            cmdBusy: false,
+            rereg: false
+        };
+
+        /* ------------------------------------------------------------------
+         * SMALL HELPERS
+         * ------------------------------------------------------------------ */
+        function el(tag, cls, text) {
+            const e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (text !== undefined && text !== null) e.textContent = text;
+            return e;
+        }
+        const msg = (text) => el('p', 'muted', text);
+
+        function shuffle(arr) {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+        const rndSeed = () => Math.floor(Math.random() * 2147483647);
+
+        function mulberry32(a) {
+            return function () {
+                a |= 0; a = (a + 0x6D2B79F5) | 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        }
+
+        function showScreen(name) {
+            $('password-screen').classList.toggle('hidden', name !== 'password');
+            $('lobby-screen').classList.toggle('hidden', name !== 'lobby');
+            $('room-screen').classList.toggle('hidden', name !== 'room');
+        }
+
+        const roomRef = () => ref(db, `rooms/${roomId}`);
+
+        /* ------------------------------------------------------------------
+         * CARD LOADING
+         * ------------------------------------------------------------------ */
+        function cleanText(t) {
+            let s = String(t ?? '');
+            s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
+            const ta = document.createElement('textarea');   // decodes &amp; &reg; etc. safely
+            ta.innerHTML = s;
+            return ta.value.trim();
+        }
+
+        function normalizeCard(raw, isBlack) {
+            if (typeof raw === 'string') raw = { text: raw };
+            if (!raw || typeof raw !== 'object' || typeof raw.text !== 'string') return null;
+            const text = cleanText(raw.text);
+            if (!text) return null;
+            if (!isBlack) return { text };
+            let pick = parseInt(raw.pick, 10);
+            if (!pick) pick = (text.match(/_+/g) || []).length || 1;
+            return { text, pick: Math.min(3, Math.max(1, pick)) };
+        }
+
+        async function loadCards() {
+            try {
+                const res = await fetch('cah-all-full.json');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+
+                const rawWhite = [];
+                const rawBlack = [];
+                const collect = (o) => {
+                    if (Array.isArray(o && o.white)) rawWhite.push(...o.white);
+                    if (Array.isArray(o && o.black)) rawBlack.push(...o.black);
+                };
+                if (Array.isArray(data)) {
+                    data.forEach(collect);
+                } else if (data && typeof data === 'object') {
+                    collect(data);
+                    Object.values(data).forEach((v) => {
+                        if (v && typeof v === 'object' && !Array.isArray(v)) collect(v);
+                    });
+                }
+
+                // De-duplicate by text, keep the file order so every client builds the identical deck.
+                const seenW = new Set();
+                const seenB = new Set();
+                CARDS.white = [];
+                CARDS.black = [];
+                rawWhite.forEach((r) => {
+                    const c = normalizeCard(r, false);
+                    if (c && !seenW.has(c.text)) { seenW.add(c.text); CARDS.white.push(c); }
+                });
+                rawBlack.forEach((r) => {
+                    const c = normalizeCard(r, true);
+                    if (c && !seenB.has(c.text)) { seenB.add(c.text); CARDS.black.push(c); }
+                });
+
+                if (!CARDS.white.length || !CARDS.black.length) throw new Error('No cards found in the JSON file.');
+                cardsLoaded = true;
+                $('load-error').classList.add('hidden');
+            } catch (err) {
+                console.error('Error loading cards:', err);
+                const box = $('load-error');
+                box.textContent = 'Could not load cah-all-full.json (' + err.message + '). Serve the page over http(s), not file://, and keep the JSON next to this file.';
+                box.classList.remove('hidden');
+            }
+            if (S) render();
+        }
+
+        /* ------------------------------------------------------------------
+         * SHARED DECKS (seeded shuffle: only seeds + positions live in Firebase)
+         * ------------------------------------------------------------------ */
+        const orderCache = new Map();
+        function getOrder(kind, seed) {
+            const key = kind + ':' + seed;
+            if (!orderCache.has(key)) {
+                const n = CARDS[kind].length;
+                const arr = Array.from({ length: n }, (_, i) => i);
+                const rnd = mulberry32(seed >>> 0);
+                for (let i = n - 1; i > 0; i--) {
+                    const j = Math.floor(rnd() * (i + 1));
+                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                }
+                orderCache.set(key, arr);
+                if (orderCache.size > 6) orderCache.delete(orderCache.keys().next().value);
+            }
+            return orderCache.get(key);
+        }
+
+        function drawWhite(deck, held) {
+            const n = CARDS.white.length;
+            for (let t = 0; t < n * 2 + 5; t++) {
+                if (deck.wPos >= n) { deck.wSeed = (deck.wSeed + 1) >>> 0; deck.wPos = 0; }   // reshuffle when exhausted
+                const idx = getOrder('white', deck.wSeed)[deck.wPos++];
+                if (!held.has(idx)) { held.add(idx); return idx; }
+            }
+            return null;
+        }
+
+        function drawBlack(deck) {
+            const n = CARDS.black.length;
+            if (deck.bPos >= n) { deck.bSeed = (deck.bSeed + 1) >>> 0; deck.bPos = 0; }
+            return getOrder('black', deck.bSeed)[deck.bPos++];
+        }
+
+        /* ------------------------------------------------------------------
+         * STATE ACCESSORS
+         * ------------------------------------------------------------------ */
+        function getPlayers() {
+            const out = {};
+            Object.entries((S && S.players) || {}).forEach(([id, p]) => {
+                if (p && typeof p.name === 'string') out[id] = p;   // ignores ghost entries
+            });
+            return out;
+        }
+        const byJoin = (a, b) => ((a.joinedAt || 0) - (b.joinedAt || 0)) || (a.id < b.id ? -1 : 1);
+        const isHost = () => !!S && S.hostId === myId;
+        const roundKey = () => `${(S && S.game) || 0}:${(S && S.round) || 0}`;
+        const whiteText = (i) => (CARDS.white[i] ? CARDS.white[i].text : '???');
+        const currentBlack = () => (S && S.blackIdx != null && cardsLoaded) ? CARDS.black[S.blackIdx] : null;
+        const myHand = () => ((S && S.players && S.players[myId] && S.players[myId].hand) || []);
+        const iAmParticipant = () => !!(S && S.participants && S.participants[myId]);
+        const mySubmission = () => (S && S.submissions && S.submissions[myId]) || null;
+
+        function eligibleIds() {
+            const players = getPlayers();
+            return Object.keys((S && S.participants) || {}).filter((id) => players[id]);
+        }
+
+        /* ------------------------------------------------------------------
+         * HOST LOGIC (only the host's browser writes phase changes and scores)
+         * ------------------------------------------------------------------ */
+        function hostAction(fn) {
+            const key = `${S.game || 0}:${S.round || 0}:${S.status}`;
+            if (local.hostKey === key) return;
+            local.hostKey = key;
+            Promise.resolve().then(fn).catch((e) => { console.error(e); local.hostKey = null; });
+        }
+
+        function hostTick() {
+            if (!S || !myId || leaving) return;
+            const players = getPlayers();
+
+            // Host left? The earliest-joined remaining player takes over.
+            if (!S.hostId || !players[S.hostId]) {
+                const cand = Object.entries(players).map(([id, p]) => ({ id, ...p })).sort(byJoin)[0];
+                if (cand && cand.id === myId) {
+                    const key = 'promo:' + S.hostId;
+                    if (local.promoKey !== key) {
+                        local.promoKey = key;
+                        update(roomRef(), { hostId: myId, host: myName }).catch(() => { local.promoKey = null; });
+                    }
+                }
+                return;
+            }
+            if (S.hostId !== myId || !cardsLoaded) return;
+
+            if (S.status === 'submitting') {
+                const eligible = eligibleIds();
+                const allIn = eligible.every((id) => S.submissions && S.submissions[id]);
+                const late = now() >= (S.phaseEndsAt || 0) + CONFIG.GRACE_MS;
+                if (allIn || late) hostAction(beginVoting);
+            } else if (S.status === 'voting') {
+                const allVoted = Object.keys(players).every((id) => S.votes && S.votes[id]);
+                const timeUp = now() >= (S.phaseEndsAt || 0);
+                if (allVoted || timeUp) hostAction(finishRound);
+            }
+        }
+
+        function validSubmission(id, pick) {
+            const arr = S.submissions && S.submissions[id];
+            if (!Array.isArray(arr) || arr.length !== pick) return false;
+            const p = getPlayers()[id];
+            if (p) {                                    // still here: cards must really be in their hand
+                const hand = p.hand || [];
+                return arr.every((c) => hand.includes(c));
+            }
+            return true;                                // they left after submitting: keep their card
+        }
+
+        async function beginVoting() {
+            const black = currentBlack();
+            const pick = black ? black.pick : 1;
+            const players = getPlayers();
+            const entries = Object.keys(S.submissions || {}).filter((id) => validSubmission(id, pick));
+
+            // Fallback auto-submit: anybody still in the round who has no valid submission gets random cards
+            // from their own hand, written by the host. This works even if their tab is asleep or throttled.
+            const filled = {};
+            eligibleIds().forEach((id) => {
+                if (entries.includes(id)) return;
+                const hand = ((players[id] && players[id].hand) || []).slice();
+                shuffle(hand);
+                const cards = hand.slice(0, pick);
+                if (cards.length === pick) {
+                    filled[id] = cards;
+                    entries.push(id);
+                }
+            });
+
+            if (!entries.length) {
+                await update(roomRef(), {
+                    status: 'round-over',
+                    phaseEndsAt: null,
+                    results: { none: true }
+                });
+                return;
+            }
+            shuffle(entries);                           // hides who was fastest
+            const names = {};
+            entries.forEach((id) => { names[id] = players[id] ? players[id].name : 'Player who left'; });
+            const upd = {
+                status: 'voting',
+                voteOrder: entries,
+                entryNames: names,
+                votes: null,
+                phaseEndsAt: now() + CONFIG.VOTE_SECONDS * 1000
+            };
+            Object.keys(filled).forEach((id) => { upd[`submissions/${id}`] = filled[id]; });
+            await update(roomRef(), upd);
+        }
+
+        async function finishRound() {
+            const players = getPlayers();
+            const order = S.voteOrder || [];
+            const votes = S.votes || {};
+
+            const counts = {};
+            order.forEach((id) => { counts[id] = 0; });
+            Object.values(votes).forEach((target) => { if (target in counts) counts[target]++; });
+
+            const max = Math.max(0, ...Object.values(counts));
+            const winners = max > 0 ? order.filter((id) => counts[id] === max) : [];   // ties: every tied card wins
+
+            const upd = {
+                status: 'round-over',
+                phaseEndsAt: null,
+                results: { winners: winners.length ? winners : null, counts: counts, max: max }
+            };
+
+            const scores = {};
+            Object.entries(players).forEach(([id, p]) => { scores[id] = p.score || 0; });
+            winners.forEach((id) => {
+                if (players[id]) {
+                    scores[id] += 1;
+                    upd[`players/${id}/score`] = scores[id];
+                }
+            });
+
+            const top = Math.max(0, ...Object.values(scores));
+            if (top >= (S.pointsToWin || CONFIG.DEFAULT_POINTS_TO_WIN)) {
+                upd.status = 'game-over';
+                upd.results.gameWinners = Object.keys(scores).filter((id) => scores[id] === top);
+            }
+            await update(roomRef(), upd);
+        }
+
+        async function startRound(fresh) {
+            const players = getPlayers();
+            const ids = Object.keys(players);
+            if (!cardsLoaded) throw new Error('Cards are still loading.');
+            if (ids.length < CONFIG.MIN_PLAYERS) throw new Error(`Need at least ${CONFIG.MIN_PLAYERS} players.`);
+
+            const deck = (fresh || !S.deck)
+                ? { wSeed: rndSeed(), wPos: 0, bSeed: rndSeed(), bPos: 0 }
+                : { wSeed: S.deck.wSeed, wPos: S.deck.wPos, bSeed: S.deck.bSeed, bPos: S.deck.bPos };
+            const prevSubs = fresh ? {} : (S.submissions || {});
+
+            // Remove last round's played cards, then top every hand up to HAND_SIZE without duplicates.
+            const held = new Set();
+            const hands = {};
+            ids.forEach((id) => {
+                const played = new Set(prevSubs[id] || []);
+                hands[id] = fresh ? [] : (players[id].hand || []).filter((c) => !played.has(c));
+                hands[id].forEach((c) => held.add(c));
+            });
+            ids.forEach((id) => {
+                while (hands[id].length < CONFIG.HAND_SIZE) {
+                    const c = drawWhite(deck, held);
+                    if (c === null) break;
+                    hands[id].push(c);
+                }
+            });
+
+            const participants = {};
+            ids.forEach((id) => { participants[id] = true; });
+
+            const upd = {
+                status: 'submitting',
+                game: fresh ? ((S.game || 0) + 1) : (S.game || 1),
+                round: fresh ? 1 : ((S.round || 0) + 1),
+                blackIdx: drawBlack(deck),
+                deck: deck,
+                participants: participants,
+                phaseEndsAt: now() + CONFIG.SUBMIT_SECONDS * 1000,
+                submissions: null,
+                votes: null,
+                voteOrder: null,
+                entryNames: null,
+                results: null
+            };
+            ids.forEach((id) => {
+                upd[`players/${id}/hand`] = hands[id];
+                if (fresh) upd[`players/${id}/score`] = 0;
+            });
+            await update(roomRef(), upd);
+        }
+
+        function runHostCmd(fn) {
+            if (local.cmdBusy) return;
+            local.cmdBusy = true;
+            Promise.resolve().then(fn)
+                .catch((e) => { console.error(e); alert(e.message || 'Action failed.'); })
+                .finally(() => { local.cmdBusy = false; });
+        }
+
+        /* ------------------------------------------------------------------
+         * PLAYER ACTIONS
+         * ------------------------------------------------------------------ */
+        function syncSelection() {
+            const key = roundKey();
+            if (local.selKey !== key) { local.selKey = key; local.selection = []; }   // new round = clean slate
+            const hand = new Set(myHand());
+            local.selection = local.selection.filter((c) => hand.has(c));
+        }
+
+        function toggleCard(c) {
+            if (!S || S.status !== 'submitting' || mySubmission()) return;
+            const black = currentBlack();
+            if (!black) return;
+            const i = local.selection.indexOf(c);
+            if (i >= 0) {
+                local.selection.splice(i, 1);
+            } else {
+                if (local.selection.length >= black.pick) local.selection.pop();   // replace the last pick
+                local.selection.push(c);
+            }
+            render();
+        }
+
+        function writeSubmission(cards) {
+            if (!S || S.status !== 'submitting') return;
+            return set(ref(db, `rooms/${roomId}/submissions/${myId}`), cards);
+        }
+
+        function submitSelection() {
+            const black = currentBlack();
+            if (!black || local.selection.length !== black.pick) return;
+            writeSubmission(local.selection.slice());
+        }
+
+        function undoSubmission() {
+            const sub = mySubmission();
+            if (!S || S.status !== 'submitting' || !sub) return;
+            local.selection = sub.slice();
+            remove(ref(db, `rooms/${roomId}/submissions/${myId}`));
+        }
+
+        function autoSubmit() {
+            if (!cardsLoaded || !iAmParticipant() || mySubmission()) return;
+            const key = roundKey();
+            if (local.autoKey === key) return;
+            const black = currentBlack();
+            if (!black) return;
+            const chosen = local.selection.slice(0, black.pick);
+            const pool = shuffle(myHand().filter((c) => !chosen.includes(c)));
+            while (chosen.length < black.pick && pool.length) chosen.push(pool.pop());
+            if (chosen.length !== black.pick) return;       // hand not dealt yet: try again on the next tick
+            local.autoKey = key;
+            Promise.resolve(writeSubmission(chosen)).catch((e) => {
+                console.error('Auto-submit failed, will retry:', e);
+                local.autoKey = null;
+            });
+        }
+
+        function castVote(target) {
+            if (!S || S.status !== 'voting') return;
+            set(ref(db, `rooms/${roomId}/votes/${myId}`), target);
+        }
+
+        /* ------------------------------------------------------------------
+         * RENDERING (one pure function of S; nothing is "reset", everything is redrawn)
+         * ------------------------------------------------------------------ */
+        function render() {
+            if (!S) return;
+            syncSelection();
+            renderHeader();
+            renderPlayers();
+            renderBlack();
+            renderStage();
+            renderHand();
+            renderControls();
+            updateTimer();
+        }
+
+        function renderHeader() {
+            $('room-title').textContent = `${S.host || 'Unknown'}'s Room`;
+            const goal = S.pointsToWin || CONFIG.DEFAULT_POINTS_TO_WIN;
+            $('round-info').textContent = S.status === 'waiting'
+                ? `First to ${goal} points wins`
+                : `Round ${S.round || 0} • First to ${goal} points wins`;
+        }
+
+        function renderPlayers() {
+            const list = $('player-list');
+            list.textContent = '';
+            const players = getPlayers();
+            Object.entries(players)
+                .map(([id, p]) => ({ id, ...p }))
+                .sort((a, b) => ((b.score || 0) - (a.score || 0)) || byJoin(a, b))
+                .forEach((p) => {
+                    let text = `${p.name}${p.id === myId ? ' (You)' : ''}${p.id === S.hostId ? ' [Host]' : ''} — ${p.score || 0} pts`;
+                    if (S.status === 'submitting') {
+                        if (S.participants && S.participants[p.id]) {
+                            text += (S.submissions && S.submissions[p.id]) ? ' ✅ locked in' : ' ⏳ choosing';
+                        } else {
+                            text += ' 👀 joins next round';
+                        }
+                    } else if (S.status === 'voting') {
+                        text += (S.votes && S.votes[p.id]) ? ' ✅ voted' : ' ⏳ voting';
+                    }
+                    list.appendChild(el('li', null, text));
+                });
+        }
+
+        function stripPeriod(s) { return s.replace(/\.$/, ''); }
+
+        function fillBlack(body, text, answers) {
+            body.textContent = '';
+            const parts = text.split(/_+/);
+            const blanks = parts.length - 1;
+            parts.forEach((part, i) => {
+                body.appendChild(document.createTextNode(part));
+                if (i < blanks) {
+                    const a = answers[i];
+                    body.appendChild(el('span', a ? 'fill' : 'blank', a ? stripPeriod(a) : '_____'));
+                }
+            });
+            if (blanks === 0 && answers.length) {
+                body.appendChild(document.createElement('br'));
+                answers.forEach((a) => {
+                    body.appendChild(el('span', 'fill', a));
+                    body.appendChild(document.createElement('br'));
+                });
+            } else if (blanks > 0 && answers.length > blanks) {
+                body.appendChild(document.createElement('br'));
+                answers.slice(blanks).forEach((a) => body.appendChild(el('span', 'fill', a)));
+            }
+        }
+
+        function blackAnswers() {
+            if (S.status === 'submitting') {
+                const sub = mySubmission();
+                return (sub || local.selection).map(whiteText);
+            }
+            if ((S.status === 'round-over' || S.status === 'game-over') && S.results && S.results.winners && S.results.winners.length === 1) {
+                const sub = S.submissions && S.submissions[S.results.winners[0]];
+                return (sub || []).map(whiteText);
+            }
+            return [];
+        }
+
+        function renderBlack() {
+            const box = $('black-card-container');
+            box.textContent = '';
+            const black = currentBlack();
+            if (!black || S.status === 'waiting') return;
+            const card = el('div', 'black-card');
+            const body = el('div', 'black-text');
+            fillBlack(body, black.text, blackAnswers());
+            card.appendChild(body);
+            card.appendChild(el('span', 'card-foot', `Pick ${black.pick}`));
+            box.appendChild(card);
+        }
+
+        function entryCard(id, opts) {
+            const cards = (S.submissions && S.submissions[id]) || [];
+            const div = el('div', 'table-card' + (opts.winner ? ' winner' : '') + (opts.voted ? ' voted' : ''));
+            const body = el('div');
+            cards.forEach((c, i) => {
+                body.appendChild(el('div', 'answer', (cards.length > 1 ? `${i + 1}. ` : '') + whiteText(c)));
+            });
+            div.appendChild(body);
+
+            const foot = el('div');
+            if (opts.mode === 'vote') {
+                if (id === myId) foot.appendChild(el('div', 'foot', '(Your card)'));
+                const btn = el('button', null, opts.voted ? 'Voted ✓' : 'Vote');
+                btn.addEventListener('click', () => castVote(id));
+                foot.appendChild(btn);
+            } else {
+                const name = (S.entryNames && S.entryNames[id]) || 'Player';
+                const n = (S.results && S.results.counts && S.results.counts[id]) || 0;
+                foot.appendChild(el('div', 'foot', `${name}${opts.winner ? ' 👑' : ''} — ${n} vote${n === 1 ? '' : 's'}`));
+            }
+            div.appendChild(foot);
+            return div;
+        }
+
+        function renderStage() {
+            const heading = $('table-heading');
+            const tc = $('table-container');
+            tc.textContent = '';
+
+            if (!cardsLoaded) {
+                heading.textContent = '';
+                tc.appendChild(msg('Loading cards…'));
+                return;
+            }
+
+            if (S.status === 'waiting') {
+                heading.textContent = '';
+                tc.appendChild(msg('Waiting for the host to start the game…'));
+            } else if (S.status === 'submitting') {
+                const eligible = eligibleIds();
+                const done = eligible.filter((id) => S.submissions && S.submissions[id]).length;
+                heading.textContent = 'Submissions (face-down until voting)';
+                tc.appendChild(msg(`${done} of ${eligible.length} locked in`));
+            } else if (S.status === 'voting') {
+                heading.textContent = 'Vote for the best answer! (You may vote for your own.)';
+                const myVote = S.votes && S.votes[myId];
+                (S.voteOrder || []).forEach((id) => tc.appendChild(entryCard(id, { mode: 'vote', voted: myVote === id })));
+            } else {
+                // round-over or game-over
+                const res = S.results || {};
+                const winners = res.winners || [];
+                const nameOf = (id) => (S.entryNames && S.entryNames[id]) || (getPlayers()[id] && getPlayers()[id].name) || 'Player';
+                if (res.none) {
+                    heading.textContent = 'Round over — no cards were submitted.';
+                } else if (!winners.length) {
+                    heading.textContent = 'Round over — nobody received any votes.';
+                } else if (winners.length > 1) {
+                    heading.textContent = `Round over — tie! ${winners.map(nameOf).join(', ')} each get a point.`;
+                } else {
+                    heading.textContent = `Round over — winner: ${nameOf(winners[0])}`;
+                }
+                if (S.status === 'game-over') {
+                    const gw = (res.gameWinners || []).map(nameOf);
+                    heading.textContent += `  🏆 Game over! ${gw.join(', ')} win${gw.length === 1 ? 's' : ''} the game.`;
+                }
+                (S.voteOrder || []).forEach((id) => tc.appendChild(entryCard(id, { mode: 'result', winner: winners.includes(id) })));
+                if (!(S.voteOrder || []).length) tc.appendChild(msg('Nothing on the table.'));
+            }
+        }
+
+        function renderHand() {
+            const wrap = $('hand-container');
+            const head = $('hand-heading');
+            wrap.textContent = '';
+            head.textContent = '';
+            if (!cardsLoaded || S.status !== 'submitting') return;
+
+            if (!iAmParticipant()) {
+                head.textContent = 'You joined mid-round — you will get cards next round.';
+                return;
+            }
+            const black = currentBlack();
+            if (!black) return;
+            const sub = mySubmission();
+            const pick = black.pick;
+            head.textContent = sub
+                ? 'Your submission is locked in.'
+                : `Your hand — choose ${pick} card${pick > 1 ? 's (order matters)' : ''}`;
+
+            const hand = myHand();
+            if (!hand.length) { wrap.appendChild(msg('Waiting for cards…')); return; }
+
+            hand.forEach((c) => {
+                const order = sub ? sub.indexOf(c) : local.selection.indexOf(c);
+                const cls = 'white-card' + (sub ? ' disabled' : '') + (order >= 0 ? ' selected' : '');
+                const card = el('div', cls);
+                card.appendChild(el('span', 'txt', whiteText(c)));
+                card.appendChild(el('span', 'card-foot', 'CAH'));
+                if (pick > 1 && order >= 0) card.appendChild(el('span', 'badge', String(order + 1)));
+                if (!sub) card.addEventListener('click', () => toggleCard(c));
+                wrap.appendChild(card);
+            });
+        }
+
+        function renderControls() {
+            const submitBtn = $('submit-card-btn');
+            const undoBtn = $('undo-card-btn');
+            const hostBtn = $('host-btn');
+            const skipBtn = $('skip-btn');
+
+            const black = currentBlack();
+            const pick = black ? black.pick : 1;
+            const canPick = cardsLoaded && S.status === 'submitting' && iAmParticipant();
+            const locked = !!mySubmission();
+
+            submitBtn.classList.toggle('hidden', !(canPick && !locked));
+            submitBtn.disabled = local.selection.length !== pick;
+            submitBtn.textContent = `Lock In (${local.selection.length}/${pick})`;
+            undoBtn.classList.toggle('hidden', !(canPick && locked));
+
+            const host = isHost();
+            const playerCount = Object.keys(getPlayers()).length;
+            let label = null;
+            if (host && S.status === 'waiting') label = 'Start Game';
+            else if (host && S.status === 'round-over') label = 'Next Round';
+            else if (host && S.status === 'game-over') label = 'Play Again';
+
+            hostBtn.classList.toggle('hidden', !label);
+            if (label) {
+                const enough = playerCount >= CONFIG.MIN_PLAYERS;
+                hostBtn.disabled = !enough || !cardsLoaded;
+                hostBtn.textContent = enough ? label : `${label} (need ${CONFIG.MIN_PLAYERS}+ players)`;
+            }
+            skipBtn.classList.toggle('hidden', !(host && (S.status === 'submitting' || S.status === 'voting')));
+        }
+
+        function updateTimer() {
+            const t = $('timer-display');
+            if (!S || !(S.status === 'submitting' || S.status === 'voting') || !S.phaseEndsAt) {
+                t.classList.add('hidden');
+                return;
+            }
+            t.classList.remove('hidden');
+            $('timer-label').textContent = S.status === 'submitting' ? 'Pick:' : 'Vote:';
+            const remaining = Math.max(0, Math.ceil((S.phaseEndsAt - now()) / 1000));
+            $('timer-sec').textContent = remaining;
+            if (remaining <= 0 && S.status === 'submitting') autoSubmit();
+        }
+
+        /* ------------------------------------------------------------------
+         * ROOM LIFECYCLE
+         * ------------------------------------------------------------------ */
+        function readName() {
+            const n = $('player-name').value.trim().slice(0, 24);
+            if (!n) { alert('Please enter your player name first!'); return null; }
+            return n;
+        }
+
+        function clearSession() {
+            ['cah_room_id', 'cah_player_name', 'cah_player_id', 'cah_score'].forEach((k) => sessionStorage.removeItem(k));
+        }
+
+        async function createRoom() {
+            const name = readName();
+            if (!name) return;
+            const points = Math.min(20, Math.max(1, parseInt($('points-to-win').value, 10) || CONFIG.DEFAULT_POINTS_TO_WIN));
+            const newRoom = push(ref(db, 'rooms'));
+            const pid = push(ref(db, `rooms/${newRoom.key}/players`)).key;
+            await set(newRoom, {
+                host: name,
+                hostId: pid,
+                status: 'waiting',
+                game: 0,
+                round: 0,
+                pointsToWin: points,
+                createdAt: serverTimestamp(),
+                players: { [pid]: { name: name, score: 0, joinedAt: serverTimestamp() } }
+            });
+            enterRoom(newRoom.key, pid, name);
+        }
+
+        async function joinRoom(rid, name, isRejoin = false) {
+            const snap = await get(ref(db, `rooms/${rid}`));
+            if (!snap.exists()) {
+                clearSession();
+                if (isRejoin) showScreen('lobby'); else alert('That room no longer exists.');
+                return;
+            }
+            const room = snap.val();
+            const pid = push(ref(db, `rooms/${rid}/players`)).key;
+
+            // After a page reload, take over the old identity's score, join order and host role.
+            const oldId = isRejoin ? sessionStorage.getItem('cah_player_id') : null;
+            const oldEntry = oldId && room.players ? room.players[oldId] : null;
+            let score = 0;
+            if (oldId) {
+                score = (oldEntry && typeof oldEntry.score === 'number')
+                    ? oldEntry.score
+                    : (parseInt(sessionStorage.getItem('cah_score'), 10) || 0);
+            }
+            const upd = {};
+            upd[`players/${pid}`] = {
+                name: name,
+                score: score,
+                joinedAt: (oldEntry && oldEntry.joinedAt) || serverTimestamp()
+            };
+            if (oldId) {
+                if (oldEntry) upd[`players/${oldId}`] = null;
+                if (room.hostId === oldId) upd.hostId = pid;
+            }
+            await update(ref(db, `rooms/${rid}`), upd);
+            enterRoom(rid, pid, name);
+        }
+
+        function enterRoom(rid, pid, name) {
+            roomId = rid;
+            myId = pid;
+            myName = name;
+            leaving = false;
+            lastScore = parseInt(sessionStorage.getItem('cah_score'), 10) || 0;
+            sessionStorage.setItem('cah_room_id', rid);
+            sessionStorage.setItem('cah_player_name', name);
+            sessionStorage.setItem('cah_player_id', pid);
+
+            onDisconnect(ref(db, `rooms/${rid}/players/${pid}`)).remove();
+            showScreen('room');
+
+            onValue(ref(db, `rooms/${rid}`), (snap) => {
+                if (leaving) return;
+                if (!snap.exists()) {
+                    clearSession();
+                    alert('This room was closed.');
+                    location.reload();
+                    return;
+                }
+                S = snap.val();
+                const me = S.players && S.players[myId];
+                if (me && typeof me.score === 'number') {
+                    lastScore = me.score;
+                    sessionStorage.setItem('cah_score', String(lastScore));
+                }
+                if (!me) reRegister();      // e.g. connection dropped and server ran onDisconnect
+                render();
+            });
+
+            if (!tickStarted) {
+                tickStarted = true;
+                setInterval(() => { updateTimer(); hostTick(); }, 250);
+            }
+        }
+
+        function reRegister() {
+            if (local.rereg || leaving) return;
+            local.rereg = true;
+            const pRef = ref(db, `rooms/${roomId}/players/${myId}`);
+            set(pRef, { name: myName, score: lastScore, joinedAt: serverTimestamp() })
+                .then(() => onDisconnect(pRef).remove())
+                .catch((e) => console.error(e))
+                .finally(() => { local.rereg = false; });
+        }
+
+        async function leaveRoom() {
+            leaving = true;
+            clearSession();
+            try {
+                const onlyMe = S && Object.keys(S.players || {}).filter((id) => id !== myId).length === 0;
+                if (onlyMe) await remove(roomRef());
+                else await remove(ref(db, `rooms/${roomId}/players/${myId}`));
+            } catch (e) { console.error(e); }
+            location.reload();
+        }
+
+        async function cleanupStaleRooms() {
+            const snap = await get(ref(db, 'rooms'));
+            if (!snap.exists()) return alert('No rooms to clean.');
+            const rooms = snap.val();
+            let cleaned = 0;
+            for (const rId in rooms) {
+                if (!rooms[rId].players) {
+                    await remove(ref(db, `rooms/${rId}`));
+                    cleaned++;
+                }
+            }
+            alert(`Cleaned ${cleaned} room(s).`);
+        }
+
+        function statusLabel(s) {
+            return ({
+                'waiting': 'waiting to start',
+                'submitting': 'picking cards',
+                'voting': 'voting',
+                'round-over': 'between rounds',
+                'game-over': 'game over'
+            })[s] || 'unknown';
+        }
+
+        function loadRooms() {
+            onValue(ref(db, 'rooms'), (snap) => {
+                const data = snap.val();
+                const list = $('rooms-list');
+                list.textContent = '';
+                if (!data) { list.appendChild(msg('No active rooms.')); return; }
+                Object.entries(data).forEach(([rid, r]) => {
+                    const n = Object.keys(r.players || {}).length;
+                    const row = el('div', 'room-item');
+                    const info = el('span');
+                    info.appendChild(el('strong', null, `${r.host || 'Unknown'}'s Room`));
+                    info.appendChild(el('div', 'muted small', `${n} player${n === 1 ? '' : 's'} • ${statusLabel(r.status)}`));
+                    row.appendChild(info);
+                    const btn = el('button', null, 'Join');
+                    btn.addEventListener('click', () => {
+                        const name = readName();
+                        if (name) joinRoom(rid, name).catch((e) => { console.error(e); alert('Could not join: ' + e.message); });
+                    });
+                    row.appendChild(btn);
+                    list.appendChild(row);
+                });
+            });
+        }
+
+        /* ------------------------------------------------------------------
+         * PASSWORD GATE (unchanged)
+         * ------------------------------------------------------------------ */
+        async function sha256(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function checkPassword() {
+            const pass = $('password-input').value;
+            const correctHash = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
+            if ((await sha256(pass)) === correctHash) {
+                sessionStorage.setItem('cah_authenticated', 'true');
+                showScreen('lobby');
+            } else {
+                alert("Incorrect password.");
+            }
+        }
+
+        /* ------------------------------------------------------------------
+         * INIT
+         * ------------------------------------------------------------------ */
+        function init() {
+            $('password-btn').addEventListener('click', checkPassword);
+            $('password-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkPassword(); });
+            $('create-room-btn').addEventListener('click', () => createRoom().catch((e) => { console.error(e); alert('Could not create room: ' + e.message); }));
+            $('cleanup-btn').addEventListener('click', () => cleanupStaleRooms().catch(console.error));
+            $('leave-btn').addEventListener('click', leaveRoom);
+            $('submit-card-btn').addEventListener('click', submitSelection);
+            $('undo-card-btn').addEventListener('click', undoSubmission);
+            $('host-btn').addEventListener('click', () => {
+                if (!isHost() || !S) return;
+                if (S.status === 'waiting' || S.status === 'game-over') runHostCmd(() => startRound(true));
+                else if (S.status === 'round-over') runHostCmd(() => startRound(false));
+            });
+            $('skip-btn').addEventListener('click', () => {
+                if (!isHost() || !S) return;
+                if (S.status === 'submitting') hostAction(beginVoting);
+                else if (S.status === 'voting') hostAction(finishRound);
+            });
+
+            loadCards();
+            loadRooms();
+
+            if (sessionStorage.getItem('cah_authenticated') === 'true') {
+                const savedRoomId = sessionStorage.getItem('cah_room_id');
+                const savedName = sessionStorage.getItem('cah_player_name');
+                if (savedRoomId && savedName) {
+                    showScreen('lobby');
+                    $('player-name').value = savedName;
+                    joinRoom(savedRoomId, savedName, true).catch((e) => { console.error(e); showScreen('lobby'); });
+                } else {
+                    showScreen('lobby');
+                }
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

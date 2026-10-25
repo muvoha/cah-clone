@@ -462,9 +462,18 @@
                 const roomData = snapshot.val();
                 if (!roomData) return;
 
+                const prevStatus = roomStatus;
                 roomStatus = roomData.status || "waiting";
                 roomHostName = roomData.host;
                 roundEndTime = roomData.roundEndTime || null;
+
+                // Reset local selection state when a new round starts
+                if (roomStatus === "submitting" && prevStatus !== "submitting") {
+                    isLockedIn = false;
+                    selectedCharArrayIdx = null;
+                    document.getElementById('submit-card-btn').classList.add('hidden');
+                    document.getElementById('undo-card-btn').classList.add('hidden');
+                }
 
                 updateStartButtonVisibility();
                 handleTimer(roundEndTime);

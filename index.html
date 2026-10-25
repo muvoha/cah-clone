@@ -501,7 +501,6 @@
 
                 if (remaining <= 0) {
                     clearInterval(timerInterval);
-                    // Independent auto-submission when THIS player's timer expires
                     if (!isLockedIn && roomStatus === "submitting") {
                         if (selectedCharArrayIdx === null && myHand.length > 0) {
                             selectedCharArrayIdx = 0;
@@ -620,13 +619,10 @@
             document.getElementById('undo-card-btn').classList.add('hidden');
             renderHand();
 
-            // Check if ALL players have submitted now
             checkAndTriggerVotingPhase();
         }
 
-        function undoSubmission() {
-            // Locking in is final for peer voting.
-        }
+        function undoSubmission() {}
 
         function checkAndTriggerVotingPhase() {
             window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}`)).then((snapshot) => {
@@ -639,7 +635,6 @@
                 const playerKeys = Object.keys(players);
                 const submissionKeys = Object.keys(submissions);
 
-                // ONLY transition when every player has a submission in the database
                 if (playerKeys.length > 0 && submissionKeys.length >= playerKeys.length) {
                     window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
                         status: "voting"
@@ -690,13 +685,72 @@
         }
 
         function castVote(targetPlayerId) {
-            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId);
+            window.dbSet(window.dbRef(window.db, `rooms/${currentRoomId}/votes/${currentPlayerId}`), targetPlayerId).then(() => {
+                // Check if all votes are in after casting
+                checkAndTallyVotes();
+            });
+        }
+
+        function checkAndTallyVotes() {
+            window.dbGet(window.dbRef(window.db, `rooms/${currentRoomId}`)).then((snapshot) => {
+                const roomData = snapshot.val();
+                if (!roomData || roomData.status !== "voting") return;
+
+                const players = roomData.players || {};
+                const votes = roomData.votes || {};
+
+                const playerKeys = Object.keys(players);
+                const voteKeys = Object.keys(votes);
+
+                // If everyone has voted, tally the scores!
+                if (playerKeys.length > 0 && voteKeys.length >= playerKeys.length) {
+                    tallyScores(roomData);
+                }
+            });
+        }
+
+        function tallyScores(roomData) {
+            const votes = roomData.votes || {};
+            const submissions = roomData.submissions || {};
+            const players = roomData.players || {};
+
+            // Count vote tallies per target player ID
+            const voteCounts = {};
+            for (const voterId in votes) {
+                const targetId = votes[voterId];
+                voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+            }
+
+            // Find the card with the most votes
+            let winningPlayerId = null;
+            let maxVotes = -1;
+            for (const targetId in voteCounts) {
+                if (voteCounts[targetId] > maxVotes) {
+                    maxVotes = voteCounts[targetId];
+                    winningPlayerId = targetId;
+                }
+            }
+
+            // Update winner score in Firebase
+            if (winningPlayerId && players[winningPlayerId]) {
+                const currentScore = players[winningPlayerId].score || 0;
+                window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}/players/${winningPlayerId}`), {
+                    score: currentScore + 1
+                });
+            }
+
+            // Announce winner and set status to round-over
+            const winnerName = players[winningPlayerId] ? players[winningPlayerId].name : "Someone";
+            window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
+                status: "round-over",
+                roundWinner: winnerName
+            });
         }
 
         function updateStartButtonVisibility() {
             const btn = document.getElementById('start-game-btn');
             const isReallyHost = (currentPlayerName === roomHostName);
-            const validStatus = (roomStatus === "waiting" || roomStatus === "voting");
+            const validStatus = (roomStatus === "waiting" || roomStatus === "voting" || roomStatus === "round-over");
 
             if (isReallyHost && validStatus && playerCount >= 2 && cardsLoaded) {
                 btn.classList.remove('hidden');

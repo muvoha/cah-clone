@@ -273,7 +273,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Sync server time offset across all clients
         onValue(ref(db, ".info/serverTimeOffset"), (snapshot) => {
             window.serverTimeOffset = snapshot.val() || 0;
         });
@@ -502,13 +501,13 @@
 
                 if (remaining <= 0) {
                     clearInterval(timerInterval);
+                    // Independent auto-submission when THIS player's timer expires
                     if (!isLockedIn && roomStatus === "submitting") {
                         if (selectedCharArrayIdx === null && myHand.length > 0) {
                             selectedCharArrayIdx = 0;
                         }
                         confirmSubmission();
                     }
-                    checkAndTriggerVotingPhase();
                 }
             }, 1000);
         }
@@ -593,6 +592,8 @@
         }
 
         function confirmSubmission() {
+            if (isLockedIn) return;
+
             if (selectedCharArrayIdx === null && myHand.length > 0) {
                 selectedCharArrayIdx = 0;
             }
@@ -619,6 +620,7 @@
             document.getElementById('undo-card-btn').classList.add('hidden');
             renderHand();
 
+            // Check if ALL players have submitted now
             checkAndTriggerVotingPhase();
         }
 
@@ -637,10 +639,8 @@
                 const playerKeys = Object.keys(players);
                 const submissionKeys = Object.keys(submissions);
 
-                const offset = window.serverTimeOffset || 0;
-                const timeExpired = roomData.roundEndTime && (Date.now() + offset >= roomData.roundEndTime);
-
-                if (playerKeys.length > 0 && (submissionKeys.length >= playerKeys.length || timeExpired)) {
+                // ONLY transition when every player has a submission in the database
+                if (playerKeys.length > 0 && submissionKeys.length >= playerKeys.length) {
                     window.dbUpdate(window.dbRef(window.db, `rooms/${currentRoomId}`), {
                         status: "voting"
                     });
